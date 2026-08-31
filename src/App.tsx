@@ -534,9 +534,9 @@ export default function App() {
   // SECTIONS_LIST only includes sections with content (or all if default exam)
   const SECTIONS_LIST = ALL_POSSIBLE_SECTIONS
     .filter(s => isDefaultExam || s.hasContent)
-    .map((s, idx) => ({
+    .map((s) => ({
       id: s.id,
-      label: `${idx + 1}. ${s.label}`
+      label: s.label
     }));
 
   // Automatically ensure currentSection points to an available section

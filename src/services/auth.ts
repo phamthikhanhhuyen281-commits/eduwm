@@ -153,6 +153,10 @@ export const authService = {
     return localStorage.getItem('admin_token') === 'true';
   },
 
+  getAdminToken(): string {
+    return 'Bearer PlAcEmEnT_TeSt_SeCrEt_Token';
+  },
+
   async updateAdminPassword(oldPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
     try {
       const adminDocRef = doc(db, 'admins', 'config');

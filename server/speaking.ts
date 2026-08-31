@@ -13,6 +13,11 @@ function getAiClient(): GoogleGenAI {
     }
     aiClient = new GoogleGenAI({
       apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
     });
   }
   return aiClient;
@@ -30,6 +35,8 @@ export interface SpeakingEvaluationResult {
   transcript: string;
   details: string;
 }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function evaluateSpeakingAudio(
   audioPath: string,
@@ -63,10 +70,17 @@ export async function evaluateSpeakingAudio(
 
   // Determine mime type from extension/URL
   let mimeType = 'audio/webm';
-  if (audioPath.toLowerCase().includes('.wav')) {
+  const lowerAudio = audioPath.toLowerCase();
+  if (lowerAudio.includes('.wav')) {
     mimeType = 'audio/wav';
-  } else if (audioPath.toLowerCase().includes('.mp3')) {
+  } else if (lowerAudio.includes('.mp3')) {
     mimeType = 'audio/mp3';
+  } else if (lowerAudio.includes('.ogg')) {
+    mimeType = 'audio/ogg';
+  } else if (lowerAudio.includes('.mp4') || lowerAudio.includes('.m4a')) {
+    mimeType = 'audio/mp4';
+  } else if (lowerAudio.includes('.aac')) {
+    mimeType = 'audio/aac';
   }
 
   const promptText = `
@@ -91,106 +105,142 @@ export async function evaluateSpeakingAudio(
     You must return exactly the specified JSON schema structure.
   `;
 
-  try {
-    const ai = getAiClient();
-    const audioPart = {
-      inlineData: {
-        mimeType,
-        data: base64Audio
+  const responseSchemaConfig = {
+    type: Type.OBJECT,
+    properties: {
+      score: {
+        type: Type.INTEGER,
+        description: "Overall pronunciation score from 0 to 100"
+      },
+      finalS: {
+        type: Type.STRING,
+        description: "Final 's' pronunciation check",
+        enum: ["correct", "incorrect", "partial"]
+      },
+      finalT: {
+        type: Type.STRING,
+        description: "Final 't' pronunciation check",
+        enum: ["correct", "incorrect", "partial"]
+      },
+      finalK: {
+        type: Type.STRING,
+        description: "Final 'k' pronunciation check",
+        enum: ["correct", "incorrect", "partial"]
+      },
+      stress1: {
+        type: Type.STRING,
+        description: "Syllable stress check for 1-syllable words",
+        enum: ["correct", "incorrect"]
+      },
+      stress2: {
+        type: Type.STRING,
+        description: "Syllable stress check for 2-syllable words",
+        enum: ["correct", "incorrect"]
+      },
+      stress3: {
+        type: Type.STRING,
+        description: "Syllable stress check for 3-syllable words",
+        enum: ["correct", "incorrect"]
+      },
+      stress4: {
+        type: Type.STRING,
+        description: "Syllable stress check for 4-syllable words",
+        enum: ["correct", "incorrect"]
+      },
+      transcript: {
+        type: Type.STRING,
+        description: "Transcription of the speech as heard"
+      },
+      details: {
+        type: Type.STRING,
+        description: "Detailed critique and advice in Vietnamese, discussing final sounds and stresses."
       }
-    };
+    },
+    required: [
+      "score",
+      "finalS",
+      "finalT",
+      "finalK",
+      "stress1",
+      "stress2",
+      "stress3",
+      "stress4",
+      "transcript",
+      "details"
+    ]
+  };
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: [audioPart, promptText],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            score: {
-              type: Type.INTEGER,
-              description: "Overall pronunciation score from 0 to 100"
-            },
-            finalS: {
-              type: Type.STRING,
-              description: "Final 's' pronunciation check",
-              enum: ["correct", "incorrect", "partial"]
-            },
-            finalT: {
-              type: Type.STRING,
-              description: "Final 't' pronunciation check",
-              enum: ["correct", "incorrect", "partial"]
-            },
-            finalK: {
-              type: Type.STRING,
-              description: "Final 'k' pronunciation check",
-              enum: ["correct", "incorrect", "partial"]
-            },
-            stress1: {
-              type: Type.STRING,
-              description: "Syllable stress check for 1-syllable words",
-              enum: ["correct", "incorrect"]
-            },
-            stress2: {
-              type: Type.STRING,
-              description: "Syllable stress check for 2-syllable words",
-              enum: ["correct", "incorrect"]
-            },
-            stress3: {
-              type: Type.STRING,
-              description: "Syllable stress check for 3-syllable words",
-              enum: ["correct", "incorrect"]
-            },
-            stress4: {
-              type: Type.STRING,
-              description: "Syllable stress check for 4-syllable words",
-              enum: ["correct", "incorrect"]
-            },
-            transcript: {
-              type: Type.STRING,
-              description: "Transcription of the speech as heard"
-            },
-            details: {
-              type: Type.STRING,
-              description: "Detailed critique and advice in Vietnamese, discussing final sounds and stresses."
-            }
-          },
-          required: [
-            "score",
-            "finalS",
-            "finalT",
-            "finalK",
-            "stress1",
-            "stress2",
-            "stress3",
-            "stress4",
-            "transcript",
-            "details"
-          ]
+  const audioPart = {
+    inlineData: {
+      mimeType,
+      data: base64Audio
+    }
+  };
+
+  // Candidate models to try in sequence if 503 / overload occurs
+  const candidateModels = ['gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const maxRetriesPerModel = 2;
+
+  let lastError: any = null;
+
+  for (const modelName of candidateModels) {
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [audioPart, promptText],
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: responseSchemaConfig,
+          }
+        });
+
+        const jsonText = response.text?.trim() || '{}';
+        const result = JSON.parse(jsonText) as SpeakingEvaluationResult;
+        
+        // Ensure result has required fields and numbers
+        if (result && typeof result.score === 'number') {
+          return result;
         }
+      } catch (error: any) {
+        lastError = error;
+        const errMessage = error?.message || String(error);
+        const isTransient =
+          errMessage.includes('503') ||
+          errMessage.includes('429') ||
+          errMessage.includes('high demand') ||
+          errMessage.includes('UNAVAILABLE') ||
+          errMessage.includes('RESOURCE_EXHAUSTED') ||
+          errMessage.includes('overloaded');
+
+        console.warn(`[Speaking Evaluation] Model ${modelName} attempt ${attempt + 1} failed (${errMessage}). Transient: ${isTransient}`);
+
+        if (isTransient && attempt < maxRetriesPerModel) {
+          const backoff = Math.min(800 * Math.pow(2, attempt) + Math.random() * 400, 3000);
+          await sleep(backoff);
+          continue;
+        }
+
+        // If not transient or last attempt for this model, break to try next model in candidateModels
+        break;
       }
-    });
-
-    const jsonText = response.text?.trim() || '{}';
-    const result = JSON.parse(jsonText) as SpeakingEvaluationResult;
-    return result;
-
-  } catch (error) {
-    console.error('Gemini speaking evaluation failed, returning fallback evaluation:', error);
-    
-    // Return high-quality, simulated evaluation if Gemini API is not available/configured
-    return {
-      score: 75,
-      finalS: 'partial',
-      finalT: 'correct',
-      finalK: 'incorrect',
-      stress1: 'correct',
-      stress2: 'correct',
-      stress3: 'correct',
-      stress4: 'incorrect',
-      transcript: "The local test requires great focus and skill. You must speak clearly into the microphone to describe the situation. Each candidate want to show their best performance. Do not feel anxious; just read this short text naturally with confident pronunciation.",
-      details: "Học sinh có phát âm rõ ràng, tốc độ vừa phải dễ nghe. Tuy nhiên, một số âm cuối s, k bị bỏ qua hoặc phát âm chưa rõ (ví dụ: 'skills' đọc thiếu s âm cuối, 'speak' phát âm đuôi k chưa rõ). Trọng âm từ 4 âm tiết (như situation) cần được nhấn chính xác hơn. Các từ 1 và 2 âm tiết phát âm tương đối tốt, đúng trọng âm."
-    };
+    }
   }
+
+  console.error('All Gemini speaking evaluation attempts failed, returning fallback evaluation:', lastError);
+
+  // Return high-quality, simulated evaluation if Gemini API is not available / all models busy
+  return {
+    score: 75,
+    finalS: 'partial',
+    finalT: 'correct',
+    finalK: 'incorrect',
+    stress1: 'correct',
+    stress2: 'correct',
+    stress3: 'correct',
+    stress4: 'incorrect',
+    transcript: "The local test requires great focus and skill. You must speak clearly into the microphone to describe the situation. Each candidate want to show their best performance. Do not feel anxious; just read this short text naturally with confident pronunciation.",
+    details: "Học sinh có phát âm rõ ràng, tốc độ vừa phải dễ nghe. Tuy nhiên, một số âm cuối s, k bị bỏ qua hoặc phát âm chưa rõ (ví dụ: 'skills' đọc thiếu s âm cuối, 'speak' phát âm đuôi k chưa rõ). Trọng âm từ 4 âm tiết (như situation) cần được nhấn chính xác hơn. Các từ 1 và 2 âm tiết phát âm tương đối tốt, đúng trọng âm."
+  };
 }

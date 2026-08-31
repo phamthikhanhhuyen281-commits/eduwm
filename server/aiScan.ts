@@ -10,6 +10,11 @@ function getAiClient(): GoogleGenAI {
     }
     aiClient = new GoogleGenAI({
       apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
     });
   }
   return aiClient;
@@ -33,6 +38,8 @@ export interface ScannedExamResult {
   };
   writingQuestions: { id: string; text: string; vietnamese: string }[];
 }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function scanExamWithAI(
   base64Data: string,
@@ -63,171 +70,204 @@ export async function scanExamWithAI(
     Extract content carefully, match character for character where applicable, and output valid JSON matching this schema exactly.
   `;
 
-  try {
-    const ai = getAiClient();
-    const filePart = {
-      inlineData: {
-        mimeType,
-        data: base64Data
-      }
-    };
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: [filePart, promptText],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
+  const responseSchemaConfig = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      description: { type: Type.STRING },
+      durationMinutes: { type: Type.INTEGER },
+      listeningPart1: {
+        type: Type.ARRAY,
+        items: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING },
-            description: { type: Type.STRING },
-            durationMinutes: { type: Type.INTEGER },
-            listeningPart1: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  type: { type: Type.STRING, enum: ["mcq"] },
-                  text: { type: Type.STRING },
-                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  answer: { type: Type.STRING }
-                },
-                required: ["id", "type", "text", "options", "answer"]
-              }
-            },
-            listeningPart2: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  type: { type: Type.STRING, enum: ["blank"] },
-                  text: { type: Type.STRING },
-                  answer: { type: Type.STRING }
-                },
-                required: ["id", "type", "text", "answer"]
-              }
-            },
-            speakingReadAloud: {
+            id: { type: Type.STRING },
+            type: { type: Type.STRING, enum: ["mcq"] },
+            text: { type: Type.STRING },
+            options: { type: Type.ARRAY, items: { type: Type.STRING } },
+            answer: { type: Type.STRING }
+          },
+          required: ["id", "type", "text", "options", "answer"]
+        }
+      },
+      listeningPart2: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            type: { type: Type.STRING, enum: ["blank"] },
+            text: { type: Type.STRING },
+            answer: { type: Type.STRING }
+          },
+          required: ["id", "type", "text", "answer"]
+        }
+      },
+      speakingReadAloud: {
+        type: Type.OBJECT,
+        properties: {
+          text: { type: Type.STRING },
+          wordCount: { type: Type.INTEGER }
+        },
+        required: ["text", "wordCount"]
+      },
+      speakingQuestions: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            text: { type: Type.STRING }
+          },
+          required: ["id", "text"]
+        }
+      },
+      grammar: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            type: { type: Type.STRING, enum: ["mcq", "blank"] },
+            text: { type: Type.STRING },
+            options: { type: Type.ARRAY, items: { type: Type.STRING } },
+            answer: { type: Type.STRING }
+          },
+          required: ["id", "type", "text", "answer"]
+        }
+      },
+      vocabulary: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            type: { type: Type.STRING, enum: ["mcq"] },
+            text: { type: Type.STRING },
+            options: { type: Type.ARRAY, items: { type: Type.STRING } },
+            answer: { type: Type.STRING }
+          },
+          required: ["id", "type", "text", "options", "answer"]
+        }
+      },
+      readingPassage: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          text: { type: Type.STRING },
+          questionsPartA: {
+            type: Type.ARRAY,
+            items: {
               type: Type.OBJECT,
               properties: {
+                id: { type: Type.STRING },
+                type: { type: Type.STRING, enum: ["mcq"] },
                 text: { type: Type.STRING },
-                wordCount: { type: Type.INTEGER }
+                options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                answer: { type: Type.STRING }
               },
-              required: ["text", "wordCount"]
-            },
-            speakingQuestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  text: { type: Type.STRING }
-                },
-                required: ["id", "text"]
-              }
-            },
-            grammar: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  type: { type: Type.STRING, enum: ["mcq", "blank"] },
-                  text: { type: Type.STRING },
-                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  answer: { type: Type.STRING }
-                },
-                required: ["id", "type", "text", "answer"]
-              }
-            },
-            vocabulary: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  type: { type: Type.STRING, enum: ["mcq"] },
-                  text: { type: Type.STRING },
-                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  answer: { type: Type.STRING }
-                },
-                required: ["id", "type", "text", "options", "answer"]
-              }
-            },
-            readingPassage: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                text: { type: Type.STRING },
-                questionsPartA: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      type: { type: Type.STRING, enum: ["mcq"] },
-                      text: { type: Type.STRING },
-                      options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      answer: { type: Type.STRING }
-                    },
-                    required: ["id", "type", "text", "options", "answer"]
-                  }
-                },
-                questionsPartB: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      type: { type: Type.STRING, enum: ["mcq"] },
-                      text: { type: Type.STRING },
-                      options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      answer: { type: Type.STRING }
-                    },
-                    required: ["id", "type", "text", "options", "answer"]
-                  }
-                }
-              },
-              required: ["title", "text", "questionsPartA", "questionsPartB"]
-            },
-            writingQuestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  text: { type: Type.STRING },
-                  vietnamese: { type: Type.STRING }
-                },
-                required: ["id", "text", "vietnamese"]
-              }
+              required: ["id", "type", "text", "options", "answer"]
             }
           },
-          required: [
-            "title",
-            "description",
-            "durationMinutes",
-            "listeningPart1",
-            "listeningPart2",
-            "speakingReadAloud",
-            "speakingQuestions",
-            "grammar",
-            "vocabulary",
-            "readingPassage",
-            "writingQuestions"
-          ]
+          questionsPartB: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                type: { type: Type.STRING, enum: ["mcq"] },
+                text: { type: Type.STRING },
+                options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                answer: { type: Type.STRING }
+              },
+              required: ["id", "type", "text", "options", "answer"]
+            }
+          }
+        },
+        required: ["title", "text", "questionsPartA", "questionsPartB"]
+      },
+      writingQuestions: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            text: { type: Type.STRING },
+            vietnamese: { type: Type.STRING }
+          },
+          required: ["id", "text", "vietnamese"]
         }
       }
-    });
+    },
+    required: [
+      "title",
+      "description",
+      "durationMinutes",
+      "listeningPart1",
+      "listeningPart2",
+      "speakingReadAloud",
+      "speakingQuestions",
+      "grammar",
+      "vocabulary",
+      "readingPassage",
+      "writingQuestions"
+    ]
+  };
 
-    const jsonText = response.text?.trim() || '{}';
-    return JSON.parse(jsonText) as ScannedExamResult;
+  const filePart = {
+    inlineData: {
+      mimeType,
+      data: base64Data
+    }
+  };
 
-  } catch (error: any) {
-    console.error('AI exam scanning failed:', error);
-    throw new Error('Quá trình quét đề bằng AI thất bại: ' + (error.message || error));
+  const candidateModels = ['gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const maxRetriesPerModel = 2;
+  let lastError: any = null;
+
+  for (const modelName of candidateModels) {
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [filePart, promptText],
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: responseSchemaConfig,
+          }
+        });
+
+        const jsonText = response.text?.trim() || '{}';
+        const parsed = JSON.parse(jsonText) as ScannedExamResult;
+        if (parsed && typeof parsed.title === 'string') {
+          return parsed;
+        }
+      } catch (error: any) {
+        lastError = error;
+        const errMessage = error?.message || String(error);
+        const isTransient =
+          errMessage.includes('503') ||
+          errMessage.includes('429') ||
+          errMessage.includes('high demand') ||
+          errMessage.includes('UNAVAILABLE') ||
+          errMessage.includes('RESOURCE_EXHAUSTED') ||
+          errMessage.includes('overloaded');
+
+        console.warn(`[Exam AI Scan] Model ${modelName} attempt ${attempt + 1} failed (${errMessage}). Transient: ${isTransient}`);
+
+        if (isTransient && attempt < maxRetriesPerModel) {
+          const backoff = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 4000);
+          await sleep(backoff);
+          continue;
+        }
+
+        break;
+      }
+    }
   }
+
+  console.error('AI exam scanning failed on all attempts:', lastError);
+  throw new Error('Quá trình quét đề bằng AI thất bại: ' + (lastError?.message || lastError || 'Model unavailable'));
 }
+

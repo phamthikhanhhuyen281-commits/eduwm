@@ -41,7 +41,7 @@ import {
   Copy,
   FileCheck
 } from 'lucide-react';
-import { WRITING_QUESTIONS, LISTENING_PART_1, LISTENING_PART_2, GRAMMAR_QUESTIONS, VOCABULARY_QUESTIONS, READING_PASSAGE } from '../questions';
+import { WRITING_QUESTIONS, LISTENING_PART_1, LISTENING_PART_2, SPEAKING_READ_ALOUD, SPEAKING_QUESTIONS, GRAMMAR_QUESTIONS, VOCABULARY_QUESTIONS, READING_PASSAGE } from '../questions';
 
 // Firebase Services
 import { authService } from '../services/auth';
@@ -183,6 +183,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   const [filteredCandidates, setFilteredCandidates] = useState<CandidateSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'completed' | 'active'>('all');
+  const [selectedExamFilter, setSelectedExamFilter] = useState<string>('all');
   const [expandedPhones, setExpandedPhones] = useState<string[]>([]);
   const [lockLoadingPhone, setLockLoadingPhone] = useState<string | null>(null);
 
@@ -1255,6 +1256,10 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
       );
     }
 
+    if (selectedExamFilter !== 'all') {
+      result = result.filter((c) => (c.examId || 'default-exam') === selectedExamFilter);
+    }
+
     if (filterType === 'completed') {
       result = result.filter((c) => c.submittedAt !== null);
     } else if (filterType === 'active') {
@@ -1262,7 +1267,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
 
     setFilteredCandidates(result);
-  }, [searchQuery, filterType, candidates]);
+  }, [searchQuery, filterType, selectedExamFilter, candidates]);
 
   // Auto-fetch fresh materials whenever materials tab is activated
   useEffect(() => {
@@ -1527,9 +1532,11 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   // Export Table to CSV
   const exportToCSV = () => {
     let csvContent = 'data:text/csv;charset=utf-8,\uFEFF'; // Add BOM for excel Vietnamese characters support
-    csvContent += 'Mã thí sinh,Họ tên,Số điện thoại,Thời gian đăng ký,Bắt đầu,Nộp bài,Thời gian làm bài,Lần chuyển tab,Điểm nghe,Điểm ngữ pháp,Điểm từ vựng,Điểm đọc,Điểm viết,Tổng điểm,Tỷ lệ %\n';
+    csvContent += 'Mã thí sinh,Họ tên,Số điện thoại,Kỳ thi,Thời gian đăng ký,Bắt đầu,Nộp bài,Thời gian làm bài,Lần chuyển tab,Điểm nghe,Điểm ngữ pháp,Điểm từ vựng,Điểm đọc,Điểm viết,Tổng điểm,Tỷ lệ %\n';
 
-    candidates.forEach((c) => {
+    const listToExport = filteredCandidates.length > 0 ? filteredCandidates : candidates;
+
+    listToExport.forEach((c) => {
       const listening = c.scores?.listening ?? '-';
       const grammar = c.scores?.grammar ?? '-';
       const vocabulary = c.scores?.vocabulary ?? '-';
@@ -1538,11 +1545,13 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
       const total = c.scores?.total ?? '-';
       const pct = c.scores?.percentage ?? '-';
       const dur = c.durationSeconds ? `${Math.floor(c.durationSeconds / 60)} phút ${c.durationSeconds % 60} giây` : '-';
+      const examTitle = exams.find(e => e.id === (c.examId || 'default-exam'))?.title || 'Đề thi Placement Test';
 
       const row = [
         c.id,
         `"${c.fullName}"`,
         `"${c.phone}"`,
+        `"${examTitle}"`,
         c.registeredAt ? new Date(c.registeredAt).toLocaleString('vi-VN') : '',
         c.startedAt ? new Date(c.startedAt).toLocaleString('vi-VN') : '',
         c.submittedAt ? new Date(c.submittedAt).toLocaleString('vi-VN') : 'Đang thi',
@@ -3486,21 +3495,70 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
               
               {/* Header Filters & Searches */}
-              <div className="flex flex-col sm:flex-row justify-between items-center pb-5 border-b border-slate-100 gap-4 mb-5">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center pb-5 border-b border-slate-100 gap-4 mb-5">
                 <div>
-                  <h3 className="font-bold text-slate-800 uppercase tracking-wide text-sm">
-                    Quản lý học sinh đăng nhập
+                  <h3 className="font-bold text-slate-800 uppercase tracking-wide text-sm flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-950" />
+                    Quản lý thí sinh & Bài làm theo kỳ thi
                   </h3>
-                  <p className="text-[11px] text-slate-500 mt-1">Danh sách học sinh đã khởi tạo tài khoản thi trên hệ thống.</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Lọc danh sách thí sinh theo từng kỳ thi, xem chi tiết bài làm thực tế, chấm điểm và reset lượt thi.</p>
                 </div>
 
-                <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-3">
+                <div className="w-full lg:w-auto flex flex-wrap items-center gap-3">
+                  {/* Exam Selector Filter */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-bold text-slate-600 whitespace-nowrap">Kỳ thi:</label>
+                    <select
+                      value={selectedExamFilter}
+                      onChange={(e) => setSelectedExamFilter(e.target.value)}
+                      className="px-3 py-2 border border-slate-200 bg-slate-50 rounded-xl text-xs font-bold text-indigo-950 focus:ring-1 focus:ring-indigo-900 focus:outline-none max-w-[220px] sm:max-w-[280px] truncate"
+                    >
+                      <option value="all">Tất cả kỳ thi ({candidates.length} thí sinh)</option>
+                      {exams.map((ex) => {
+                        const count = candidates.filter((c) => (c.examId || 'default-exam') === ex.id).length;
+                        return (
+                          <option key={ex.id} value={ex.id}>
+                            {ex.title} ({count} thí sinh)
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Status filter pills */}
+                  <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                    <button
+                      onClick={() => setFilterType('all')}
+                      className={`px-2.5 py-1 rounded-lg transition-all ${
+                        filterType === 'all' ? 'bg-white text-indigo-950 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Tất cả
+                    </button>
+                    <button
+                      onClick={() => setFilterType('completed')}
+                      className={`px-2.5 py-1 rounded-lg transition-all ${
+                        filterType === 'completed' ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Đã nộp bài
+                    </button>
+                    <button
+                      onClick={() => setFilterType('active')}
+                      className={`px-2.5 py-1 rounded-lg transition-all ${
+                        filterType === 'active' ? 'bg-white text-amber-800 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Đang thi
+                    </button>
+                  </div>
+
                   {/* Search box */}
-                  <div className="relative w-full sm:max-w-xs">
+                  <div className="relative flex-grow sm:w-56">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
-                      placeholder="Tìm theo tên, SĐT..."
+                      placeholder="Tìm theo tên, SĐT, ID..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-xs focus:ring-1 focus:ring-indigo-900 focus:outline-none"
@@ -3511,7 +3569,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                   <button
                     onClick={exportToCSV}
                     disabled={candidates.length === 0}
-                    className="flex items-center gap-1.5 bg-indigo-900 hover:bg-indigo-850 disabled:bg-slate-200 text-white disabled:text-slate-400 text-xs font-bold px-4 py-2 rounded-xl border border-indigo-950 cursor-pointer shadow-sm ml-auto"
+                    className="flex items-center gap-1.5 bg-indigo-900 hover:bg-indigo-850 disabled:bg-slate-200 text-white disabled:text-slate-400 text-xs font-bold px-4 py-2 rounded-xl border border-indigo-950 cursor-pointer shadow-sm"
                   >
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
@@ -3522,21 +3580,25 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
               <div className="overflow-x-auto select-none">
                 {filteredCandidates.length === 0 ? (
                   <div className="text-center py-12 text-slate-400 text-sm italic">
-                    Chưa có thí sinh nào đăng nhập hoặc khớp với điều kiện tìm kiếm.
+                    Chưa có thí sinh nào đăng ký cho kỳ thi này hoặc khớp với điều kiện tìm kiếm.
                   </div>
                 ) : (
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-150 text-slate-500 font-bold uppercase tracking-wider">
-                        <th className="py-3 px-4">Học sinh</th>
+                        <th className="py-3 px-4">Thí sinh</th>
                         <th className="py-3 px-4">Số điện thoại</th>
-                        <th className="py-3 px-4">Thời gian đăng ký</th>
-                        <th className="py-3 px-4 text-center">Trạng thái khóa</th>
+                        <th className="py-3 px-4">Kỳ thi tham gia</th>
+                        <th className="py-3 px-4">Trạng thái / Điểm số</th>
+                        <th className="py-3 px-4 text-center">Khóa tài khoản</th>
                         <th className="py-3 px-4 text-right">Hành động</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                       {filteredCandidates.map((c) => {
+                        const candExam = exams.find(e => e.id === (c.examId || 'default-exam'));
+                        const isSubmitted = !!c.submittedAt;
+
                         return (
                           <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-4 px-4">
@@ -3545,7 +3607,40 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                             </td>
                             <td className="py-4 px-4 font-mono font-bold text-indigo-950">{c.phone}</td>
                             <td className="py-4 px-4">
-                              {new Date(c.registeredAt).toLocaleTimeString('vi-VN')} {new Date(c.registeredAt).toLocaleDateString('vi-VN')}
+                              <span className="font-bold text-indigo-950 block text-xs line-clamp-1">
+                                {candExam?.title || 'Đề thi Placement Test'}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">Mã: {c.examId || 'default-exam'}</span>
+                            </td>
+                            <td className="py-4 px-4">
+                              {isSubmitted ? (
+                                <div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
+                                      <CheckCircle className="w-3 h-3 text-emerald-600" /> ĐÃ NỘP BÀI
+                                    </span>
+                                    {c.scores && (
+                                      <span className="font-black text-xs font-mono text-indigo-950">
+                                        {c.scores.total}đ ({c.scores.percentage}%)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                                    {new Date(c.submittedAt!).toLocaleString('vi-VN')}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div>
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800">
+                                    <Clock className="w-3 h-3 text-amber-600" /> ĐANG LÀM / CHƯA NỘP
+                                  </span>
+                                  {c.startedAt && (
+                                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                                      Bắt đầu: {new Date(c.startedAt).toLocaleTimeString('vi-VN')}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </td>
                             <td className="py-4 px-4 text-center">
                               {c.isLocked ? (
@@ -3563,7 +3658,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                                 <button
                                   onClick={() => handleViewDetail(c.id)}
                                   className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg hover:shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 font-bold"
-                                  title="Xem chi tiết kết quả bài làm"
+                                  title="Xem chi tiết kết quả và bài làm"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                   Chi tiết
@@ -3571,7 +3666,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                                 <button
                                   onClick={() => handleResetCandidate(c.id, c.fullName)}
                                   className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-250 hover:bg-amber-100 rounded-lg hover:shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 font-bold"
-                                  title="Reset lượt thi dở (Thi lại)"
+                                  title="Reset lượt thi dở (Cho phép thi lại)"
                                 >
                                   <RotateCcw className="w-3.5 h-3.5" />
                                   Reset
@@ -3592,7 +3687,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                                 <button
                                   onClick={() => handleDeleteCandidate(c.id, c.fullName)}
                                   className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg hover:shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 font-bold"
-                                  title="Xóa vĩnh viễn học sinh này"
+                                  title="Xóa vĩnh viễn thí sinh này"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                   Xóa
@@ -3648,9 +3743,86 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
               )}
             </div>
 
-            {selectedCandidate && (
+            {selectedCandidate && (() => {
+              const candidateExam = exams.find(e => e.id === (selectedCandidate.examId || 'default-exam')) || (selectedCandidate.examId === 'default-exam' || !selectedCandidate.examId ? exams.find(e => e.id === 'default-exam') : null);
+              
+              // Only fallback to hardcoded default questions if candidate explicitly took default-exam and exam object was not loaded from DB yet
+              const isDefaultExamFallback = !candidateExam && (!selectedCandidate.examId || selectedCandidate.examId === 'default-exam');
+              const qData = candidateExam?.questions || (isDefaultExamFallback ? {
+                listeningPart1: LISTENING_PART_1,
+                listeningPart2: LISTENING_PART_2,
+                speakingReadAloud: SPEAKING_READ_ALOUD,
+                speakingQuestions: SPEAKING_QUESTIONS,
+                grammar: GRAMMAR_QUESTIONS,
+                vocabulary: VOCABULARY_QUESTIONS,
+                readingPassage: READING_PASSAGE,
+                writingQuestions: WRITING_QUESTIONS,
+              } : {});
+
+              const speakingReadAloudText = (qData.speakingReadAloud?.text || '').trim();
+              const speakingQuestionsList = Array.isArray(qData.speakingQuestions) ? qData.speakingQuestions.filter((q: any) => q && (q.text || q.prompt || q.question)) : [];
+              const hasSpeaking = Boolean(speakingReadAloudText || speakingQuestionsList.length > 0);
+
+              const writingQuestionsList = Array.isArray(qData.writingQuestions) ? qData.writingQuestions.filter((q: any) => q && (q.vietnamese || q.prompt || q.text)) : [];
+              const hasWriting = writingQuestionsList.length > 0;
+
+              const listeningP1List = Array.isArray(qData.listeningPart1) ? qData.listeningPart1 : [];
+              const listeningP2List = Array.isArray(qData.listeningPart2) ? qData.listeningPart2 : [];
+              const totalListeningCount = listeningP1List.length + listeningP2List.length;
+              const hasListening = totalListeningCount > 0;
+
+              const grammarQuestionsList = Array.isArray(qData.grammar) ? qData.grammar : [];
+              const totalGrammarCount = grammarQuestionsList.length;
+              const hasGrammar = totalGrammarCount > 0;
+
+              const vocabQuestionsList = Array.isArray(qData.vocabulary) ? qData.vocabulary : [];
+              const totalVocabCount = vocabQuestionsList.length;
+              const hasVocabulary = totalVocabCount > 0;
+
+              const readingPassageData = qData.readingPassage || null;
+              const readingPartAList = Array.isArray(readingPassageData?.questionsPartA) ? readingPassageData.questionsPartA : [];
+              const readingPartBList = Array.isArray(readingPassageData?.questionsPartB) ? readingPassageData.questionsPartB : [];
+              const totalReadingCount = readingPartAList.length + readingPartBList.length;
+              const hasReading = totalReadingCount > 0 || Boolean(readingPassageData?.text?.trim());
+
+              const totalAutoGradedCount = totalListeningCount + totalGrammarCount + totalVocabCount + totalReadingCount;
+              const hasAutoGradedSections = hasListening || hasGrammar || hasVocabulary || totalReadingCount > 0;
+
+              // Compute available audit tabs strictly according to this exam's actual questions
+              const availableTabs: { id: string; label: string; count: number; score: number }[] = [];
+              if (hasListening) availableTabs.push({ id: 'listening', label: 'Listening', count: totalListeningCount, score: selectedCandidate.scores?.listening || 0 });
+              if (hasGrammar) availableTabs.push({ id: 'grammar', label: 'Grammar', count: totalGrammarCount, score: selectedCandidate.scores?.grammar || 0 });
+              if (hasVocabulary) availableTabs.push({ id: 'vocabulary', label: 'Vocabulary', count: totalVocabCount, score: selectedCandidate.scores?.vocabulary || 0 });
+              if (hasReading) availableTabs.push({ id: 'reading', label: 'Reading', count: totalReadingCount, score: selectedCandidate.scores?.reading || 0 });
+
+              const currentAuditTab = availableTabs.some(t => t.id === activeAuditTab)
+                ? activeAuditTab
+                : (availableTabs[0]?.id || 'listening');
+
+              return (
               <div className="space-y-8">
                 
+                {/* 0. CANDIDATE EXAM BANNER */}
+                <div className="bg-indigo-50 border border-indigo-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-900 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-900 block">Kỳ thi của bài làm này:</span>
+                      <h3 className="text-sm font-black text-indigo-950">
+                        {candidateExam?.title || 'Đề thi Placement Test'}
+                      </h3>
+                      <span className="text-[10px] text-slate-500 font-mono">Mã kỳ thi: {selectedCandidate.examId || 'default-exam'}</span>
+                    </div>
+                  </div>
+                  <div className="text-right sm:self-center shrink-0">
+                    <span className="inline-flex items-center gap-1 text-xs font-bold px-3 py-1 bg-white text-indigo-900 border border-indigo-200 rounded-lg shadow-xs">
+                      Chỉ hiển thị bài làm thực tế của kỳ thi này
+                    </span>
+                  </div>
+                </div>
+
                 {/* 1. CANDIDATE TIME & LOG METRICS CARD */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 bg-slate-50 border border-slate-200 p-5 rounded-2xl">
                   <div>
@@ -3692,11 +3864,11 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                   </div>
 
                   <div>
-                    <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wide">TỔNG ĐIỂM CHƯA GỒM VIẾT</h4>
+                    <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wide">TỔNG ĐIỂM TRẮC NGHIỆM</h4>
                     {selectedCandidate.scores ? (
                       <div className="mt-1.5 flex items-center gap-3">
                         <div className="text-3xl font-black text-indigo-900 font-mono bg-indigo-50 border border-indigo-150 p-2.5 rounded-xl">
-                          {selectedCandidate.scores.total} <span className="text-xs font-normal text-slate-400">/ 85</span>
+                          {selectedCandidate.scores.total} <span className="text-xs font-normal text-slate-400">/ {totalAutoGradedCount > 0 ? totalAutoGradedCount : (selectedCandidate.scores.maxPossible || 0)}</span>
                         </div>
                         <div>
                           <div className="text-xs font-bold text-slate-500">Tỷ lệ chính xác</div>
@@ -3723,37 +3895,57 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                       <div className="flex flex-col items-center justify-center bg-indigo-950/80 border border-indigo-800 px-6 py-5 rounded-2xl shadow-inner shrink-0 text-center min-w-[200px]">
                         <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-widest block mb-1">RECOMMENDED CLASS</span>
                         <div className="text-4xl font-black text-amber-400 font-mono tracking-tight">
-                          {selectedCandidate.scores.total <= 30 ? 'A1' :
-                           selectedCandidate.scores.total <= 50 ? 'A2' :
-                           selectedCandidate.scores.total <= 65 ? 'B1' :
-                           selectedCandidate.scores.total <= 78 ? 'B2' : 'C1'}
+                          {selectedCandidate.scores.percentage <= 30 ? 'A1' :
+                           selectedCandidate.scores.percentage <= 50 ? 'A2' :
+                           selectedCandidate.scores.percentage <= 65 ? 'B1' :
+                           selectedCandidate.scores.percentage <= 78 ? 'B2' : 'C1'}
                         </div>
                         <span className="text-[11px] font-bold text-white mt-1">
-                          {selectedCandidate.scores.total <= 30 ? 'Lớp Starter / Elementary' :
-                           selectedCandidate.scores.total <= 50 ? 'Lớp Pre-Intermediate' :
-                           selectedCandidate.scores.total <= 65 ? 'Lớp Intermediate' :
-                           selectedCandidate.scores.total <= 78 ? 'Lớp Upper-Intermediate' : 'Lớp Advanced'}
+                          {selectedCandidate.scores.percentage <= 30 ? 'Lớp Starter / Elementary' :
+                           selectedCandidate.scores.percentage <= 50 ? 'Lớp Pre-Intermediate' :
+                           selectedCandidate.scores.percentage <= 65 ? 'Lớp Intermediate' :
+                           selectedCandidate.scores.percentage <= 78 ? 'Lớp Upper-Intermediate' : 'Lớp Advanced'}
                         </span>
                       </div>
 
                       <div className="space-y-2 flex-grow text-sm leading-relaxed text-indigo-100/95 font-sans">
-                        <p className="font-bold text-amber-400 text-xs">Phân tích kết quả kiểm tra năng lực tự động:</p>
+                        <p className="font-bold text-amber-400 text-xs">Phân tích kết quả kiểm tra năng lực thực tế:</p>
                         <ul className="text-xs space-y-1.5 list-disc list-inside font-medium text-justify">
-                          <li>
-                            Tổng điểm đánh giá đạt <strong className="text-white font-mono">{selectedCandidate.scores.total} / {selectedCandidate.scores.maxPossible}</strong> (Tỉ lệ chính xác <strong className="text-white font-mono">{selectedCandidate.scores.percentage}%</strong>).
-                          </li>
-                          <li>
-                            Trắc nghiệm Đọc hiểu, Ngữ pháp & Từ vựng: Đúng <strong className="text-white font-mono">{selectedCandidate.scores.reading} / 6</strong> câu Reading, <strong className="text-white font-mono">{selectedCandidate.scores.grammar} / 30</strong> câu Ngữ pháp, và <strong className="text-white font-mono">{selectedCandidate.scores.vocabulary} / 22</strong> câu Từ vựng.
-                          </li>
-                          <li>
-                            Kỹ năng Nghe (Listening): Đúng <strong className="text-white font-mono">{selectedCandidate.scores.listening} / 17</strong> câu hỏi.
-                          </li>
-                          <li>
-                            Kỹ năng Nói (Speaking): Thí sinh đã hoàn thành ghi âm các phần thi nói.
-                          </li>
-                          <li>
-                            Kỹ năng Viết (Writing): Điểm viết do Giáo viên chấm là <strong className="text-white font-mono">{selectedCandidate.writingScore} / 10</strong> điểm.
-                          </li>
+                          {totalAutoGradedCount > 0 && (
+                            <li>
+                              Tổng điểm trắc nghiệm: <strong className="text-white font-mono">{selectedCandidate.scores.total} / {totalAutoGradedCount}</strong> câu (Tỉ lệ chính xác <strong className="text-white font-mono">{selectedCandidate.scores.percentage}%</strong>).
+                            </li>
+                          )}
+                          {hasReading && (
+                            <li>
+                              Đọc hiểu (Reading): Đúng <strong className="text-white font-mono">{selectedCandidate.scores.reading || 0} / {totalReadingCount}</strong> câu.
+                            </li>
+                          )}
+                          {hasGrammar && (
+                            <li>
+                              Ngữ pháp (Grammar): Đúng <strong className="text-white font-mono">{selectedCandidate.scores.grammar || 0} / {totalGrammarCount}</strong> câu.
+                            </li>
+                          )}
+                          {hasVocabulary && (
+                            <li>
+                              Từ vựng (Vocabulary): Đúng <strong className="text-white font-mono">{selectedCandidate.scores.vocabulary || 0} / {totalVocabCount}</strong> câu.
+                            </li>
+                          )}
+                          {hasListening && (
+                            <li>
+                              Kỹ năng Nghe (Listening): Đúng <strong className="text-white font-mono">{selectedCandidate.scores.listening || 0} / {totalListeningCount}</strong> câu.
+                            </li>
+                          )}
+                          {hasSpeaking && (
+                            <li>
+                              Kỹ năng Nói (Speaking): Thí sinh đã thực hiện bài thi nói ({speakingQuestionsList.length + (speakingReadAloudText ? 1 : 0)} phần).
+                            </li>
+                          )}
+                          {hasWriting && (
+                            <li>
+                              Kỹ năng Viết (Writing): Điểm viết do Giáo viên chấm là <strong className="text-white font-mono">{selectedCandidate.writingScore || 0} / 10</strong> điểm ({writingQuestionsList.length} câu tự luận).
+                            </li>
+                          )}
                         </ul>
                       </div>
                     </div>
@@ -3776,28 +3968,24 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                 </div>
 
                 {/* 3. SPEAKING EVALUATOR BOARD */}
-                <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
-                  <h4 className="text-xs font-extrabold text-slate-700 uppercase tracking-wide border-b border-slate-100 pb-2.5 flex items-center gap-2">
-                    <Volume2 className="w-4 h-4 text-indigo-900" /> QUẢN LÝ BÀI THI SPEAKING (SPEAKING MANAGEMENT)
-                  </h4>
+                {hasSpeaking && (
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
+                    <h4 className="text-xs font-extrabold text-slate-700 uppercase tracking-wide border-b border-slate-100 pb-2.5 flex items-center gap-2">
+                      <Volume2 className="w-4 h-4 text-indigo-900" /> QUẢN LÝ BÀI THI SPEAKING (SPEAKING MANAGEMENT)
+                    </h4>
 
-                  {(() => {
-                    const candidateExam = exams.find(e => e.id === selectedCandidate.examId);
-                    const readAloudText = candidateExam?.questions?.speakingReadAloud?.text || "Many people think that learning a new language is difficult. However, with regular practice, it becomes much easier. The key is to speak as much as possible, even if you make mistakes. Reading short stories and watching English movies also help to build vocabulary quickly.";
-                    const spQuestions = candidateExam?.questions?.speakingQuestions || [];
-                    
-                    return (
-                      <div className="grid grid-cols-1 gap-6">
-                        <div className="space-y-4">
-                          
-                          {/* Part 1 */}
+                    <div className="grid grid-cols-1 gap-6">
+                      <div className="space-y-4">
+                        
+                        {/* Part 1 */}
+                        {speakingReadAloudText && (
                           <div className="p-4 bg-slate-50 border border-slate-150 rounded-xl">
                             <h5 className="font-bold text-xs text-indigo-950 mb-2 uppercase">Bài 1: Đọc to đoạn văn</h5>
                             
                             {/* Target source text display */}
                             <div className="bg-indigo-50/40 border border-indigo-100 p-3.5 rounded-lg mb-3">
                               <span className="text-[10px] uppercase font-bold text-indigo-900 block mb-1">Văn bản cần đọc (Source Reading Passage):</span>
-                              <p className="text-xs text-slate-800 leading-relaxed font-serif">"{readAloudText}"</p>
+                              <p className="text-xs text-slate-800 leading-relaxed font-serif">"{speakingReadAloudText}"</p>
                             </div>
 
                             {selectedCandidate.answers?.speakingPart1?.audioPath && selectedCandidate.answers.speakingPart1.audioPath.trim() !== '' ? (
@@ -3815,26 +4003,25 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                               <span className="text-xs text-slate-400 italic">Thí sinh không làm hoặc không có file ghi âm.</span>
                             )}
                           </div>
+                        )}
 
-                          {/* Part 2 interview audios */}
+                        {/* Part 2 interview audios */}
+                        {speakingQuestionsList.length > 0 && (
                           <div className="p-4 bg-slate-50 border border-slate-150 rounded-xl space-y-4">
-                            <h5 className="font-bold text-xs text-indigo-950 border-b border-slate-250 pb-1 uppercase">Bài 2: Ghi âm Trả lời 3 Câu hỏi</h5>
+                            <h5 className="font-bold text-xs text-indigo-950 border-b border-slate-250 pb-1 uppercase">
+                              Bài 2: Ghi âm Trả lời {speakingQuestionsList.length} Câu hỏi
+                            </h5>
                             
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                              {Array.from({ length: 3 }).map((_, idx) => {
-                                const qText = spQuestions[idx]?.text || (
-                                  idx === 0 ? "Do you like watching movies?" :
-                                  idx === 1 ? "Is it important to play sports?" :
-                                  "Why do many young people prefer living in the cities?"
-                                );
+                              {speakingQuestionsList.map((spQ: any, idx: number) => {
                                 const audioKey = `sp_${idx + 1}_audioPath` as keyof typeof selectedCandidate.answers.speakingPart2;
                                 const audioPath = selectedCandidate.answers?.speakingPart2?.[audioKey];
 
                                 return (
-                                  <div key={idx} className="space-y-1.5 bg-white p-3 rounded-lg border border-slate-150 flex flex-col justify-between">
+                                  <div key={spQ.id || idx} className="space-y-1.5 bg-white p-3 rounded-lg border border-slate-150 flex flex-col justify-between">
                                     <div>
                                       <p className="text-[10px] text-slate-400 font-extrabold uppercase shrink-0">CÂU {idx + 1}</p>
-                                      <p className="text-xs font-bold text-slate-800 leading-snug my-1 italic shrink-0">"{qText}"</p>
+                                      <p className="text-xs font-bold text-slate-800 leading-snug my-1 italic shrink-0">"{spQ.text || spQ.prompt || spQ.question}"</p>
                                     </div>
                                     <div className="pt-2">
                                       {audioPath && typeof audioPath === 'string' && audioPath.trim() !== '' ? (
@@ -3848,283 +4035,270 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                               })}
                             </div>
                           </div>
+                        )}
 
-                        </div>
                       </div>
-                    );
-                  })()}
-                </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 4. WRITING MANAGEMENT PANEL */}
-                <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
-                  <h4 className="text-xs font-extrabold text-slate-700 uppercase tracking-wide border-b border-slate-100 pb-2.5 flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-indigo-950" /> QUẢN LÝ VÀ CHẤM ĐIỂM WRITING (WRITING MANAGEMENT)
-                  </h4>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    {/* View answers */}
-                    <div className="lg:col-span-7 space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                      {WRITING_QUESTIONS.map((q, idx) => {
-                        const answer = selectedCandidate.answers?.writing?.[q.id] || '';
-                        const isSkipped = answer === '__SKIPPED__';
-                        const note = selectedCandidate.answers?.writing?.[`__NOTE__${q.id}`] || '';
-                        return (
-                          <div key={q.id} className={`p-3.5 border rounded-lg space-y-1.5 text-xs transition-all ${
-                            isSkipped ? 'bg-amber-50/20 border-amber-200' : 'bg-slate-50 border-slate-150'
-                          }`}>
-                            <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
-                              <span className="flex items-center gap-1">
-                                CÂU HỎI {idx + 1}
-                                {isSkipped && (
-                                  <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-extrabold uppercase text-[8px] flex items-center gap-0.5">
-                                    <ShieldAlert className="w-2.5 h-2.5 text-amber-600" /> Đã bỏ qua
-                                  </span>
-                                )}
-                              </span>
-                              <span className="text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">Vietnamese</span>
-                            </div>
-                            <p className="font-bold text-slate-800 font-sans">{q.vietnamese}</p>
-                            
-                            <div className="pt-2 border-t border-slate-200/60">
-                              <span className="text-[10px] font-bold text-indigo-900 block mb-1">BÀI LÀM CỦA THÍ SINH:</span>
-                              {isSkipped ? (
-                                <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-950 font-sans leading-relaxed">
-                                  <span className="font-extrabold block text-[9px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                  <span className="italic font-bold block mt-1">
-                                    Lý do: {note || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
-                                  </span>
-                                </div>
-                              ) : (
-                                <p className="font-sans italic text-slate-700 bg-white p-2.5 rounded border border-slate-200 select-all leading-relaxed whitespace-pre-wrap font-medium">
-                                  {answer ? `"${answer}"` : <span className="text-red-500 font-normal">Thí sinh bỏ trống không làm câu này.</span>}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Grade box */}
-                    <form className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4" onSubmit={handleGradeWriting}>
-                      <h5 className="font-bold text-xs text-indigo-950 uppercase border-b border-slate-200 pb-2">CHẤM ĐIỂM THỦ CÔNG</h5>
-
-                      {gradingSuccess && (
-                        <div className="bg-green-50 text-green-700 p-3 rounded-xl border border-green-200 text-[11px] font-bold flex items-center gap-1">
-                          <Check className="w-4 h-4" /> Đã lưu điểm và cập nhật học lực thí sinh thành công!
-                        </div>
-                      )}
-
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Điểm thi viết (Thang điểm từ 0 đến 10)</label>
-                        <input
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          max="10"
-                          required
-                          value={writingScore}
-                          onChange={(e) => setWritingScore(parseFloat(e.target.value) || 0)}
-                          className="w-full px-4 py-3 border border-slate-200 bg-white rounded-xl text-sm font-bold text-indigo-950 focus:outline-none focus:ring-1 focus:ring-indigo-900"
-                        />
-                        <p className="text-[9px] text-slate-400 leading-normal">* Mỗi câu viết được cộng tối đa 1 điểm.</p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Nhận xét chi tiết của giáo viên</label>
-                        <textarea
-                          rows={6}
-                          placeholder="Nhập nhận xét của giáo viên..."
-                          value={writingComment}
-                          onChange={(e) => setWritingComment(e.target.value)}
-                          className="w-full p-3 border border-slate-200 bg-white rounded-xl text-xs font-sans text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-900 resize-y"
-                        />
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={gradingLoading}
-                        className="w-full bg-indigo-900 hover:bg-indigo-850 disabled:bg-indigo-300 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shadow"
-                      >
-                        <Save className="w-4 h-4" /> {gradingLoading ? 'Đang lưu điểm...' : 'Lưu điểm và Nhận xét'}
-                      </button>
-                    </form>
-                  </div>
-                </div>
-
-                {/* 5. AUTO GRADED QUESTIONS AUDIT DETAILS */}
-                <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
-                  <div className="border-b border-slate-100 pb-4">
-                    <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-indigo-950" /> CHI TIẾT BÀI LÀM TỪNG CÂU (DETAILED ANSWERS AUDIT)
+                {hasWriting && (
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
+                    <h4 className="text-xs font-extrabold text-slate-700 uppercase tracking-wide border-b border-slate-100 pb-2.5 flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-indigo-950" /> QUẢN LÝ VÀ CHẤM ĐIỂM WRITING (WRITING MANAGEMENT)
                     </h4>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Xem chi tiết từng câu hỏi, các đáp án học sinh đã chọn và đáp án đúng. Đúng hiện màu xanh lá, sai hiện màu đỏ.
-                    </p>
-                  </div>
 
-                  {/* Tab switcher */}
-                  <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 select-none">
-                    <button
-                      type="button"
-                      onClick={() => setActiveAuditTab('listening')}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-                        activeAuditTab === 'listening' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Listening ({selectedCandidate.scores?.listening}/17)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveAuditTab('grammar')}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-                        activeAuditTab === 'grammar' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Grammar ({selectedCandidate.scores?.grammar}/30)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveAuditTab('vocabulary')}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-                        activeAuditTab === 'vocabulary' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Vocabulary ({selectedCandidate.scores?.vocabulary}/22)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveAuditTab('reading')}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-                        activeAuditTab === 'reading' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Reading ({selectedCandidate.scores?.reading}/6)
-                    </button>
-                  </div>
-
-                  {/* Audit list */}
-                  <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-                    {activeAuditTab === 'listening' && (
-                      <div className="space-y-4">
-                        <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
-                          PART 1: MULTIPLE CHOICE QUESTIONS (CÂU 1 - 7)
-                        </div>
-                        {LISTENING_PART_1.map((q, idx) => {
-                          const ans = selectedCandidate.answers?.listeningPart1?.[q.id] || '';
-                          const isSkipped = ans === '__SKIPPED__';
-                          const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* View answers */}
+                      <div className="lg:col-span-7 space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                        {writingQuestionsList.map((q: any, idx: number) => {
+                          const answer = selectedCandidate.answers?.writing?.[q.id] || '';
+                          const isSkipped = answer === '__SKIPPED__';
+                          const note = selectedCandidate.answers?.writing?.[`__NOTE__${q.id}`] || '';
                           return (
-                            <div key={q.id} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                              isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                              isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                              'bg-rose-50/40 border-rose-150'
+                            <div key={q.id || idx} className={`p-3.5 border rounded-lg space-y-1.5 text-xs transition-all ${
+                              isSkipped ? 'bg-amber-50/20 border-amber-200' : 'bg-slate-50 border-slate-150'
                             }`}>
-                              <div className="flex justify-between items-start">
-                                <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Listening Part 1)</span>
-                                <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                  isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                  isSkipped ? 'bg-amber-100 text-amber-800' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                  {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                                <span className="flex items-center gap-1">
+                                  CÂU HỎI {idx + 1}
+                                  {isSkipped && (
+                                    <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-extrabold uppercase text-[8px] flex items-center gap-0.5">
+                                      <ShieldAlert className="w-2.5 h-2.5 text-amber-600" /> Đã bỏ qua
+                                    </span>
+                                  )}
                                 </span>
+                                <span className="text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">Tự luận</span>
                               </div>
-                              <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                              <p className="font-bold text-slate-800 font-sans">{q.vietnamese || q.prompt || q.text}</p>
                               
-                              {isSkipped ? (
-                                <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                  <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                  <span className="italic font-bold block mt-1">
-                                    Lý do: {selectedCandidate.answers?.listeningPart1?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                                  {q.options.map((opt, oIdx) => {
-                                    const letter = String.fromCharCode(65 + oIdx);
-                                    const isSelected = ans.trim().toUpperCase() === letter;
-                                    const isCorrectLetter = q.answer.toUpperCase() === letter;
-                                    return (
-                                      <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                        isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                        isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                        !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                        'bg-white border-slate-200 text-slate-600'
-                                      }`}>
-                                        <span className="font-bold mr-1.5">{letter}.</span> {opt}
-                                        {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                        {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                        <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
-                          PART 2: FILL IN THE BLANKS (CÂU 8 - 17)
-                        </div>
-                        {LISTENING_PART_2.map((q, idx) => {
-                          const ans = selectedCandidate.answers?.listeningPart2?.[q.id] || '';
-                          const isSkipped = ans === '__SKIPPED__';
-                          const isCorrect = !isSkipped && checkAnswerClient(ans, q.answer);
-                          return (
-                            <div key={q.id} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                              isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                              isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                              'bg-rose-50/40 border-rose-150'
-                            }`}>
-                              <div className="flex justify-between items-start">
-                                <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 8} (Listening Part 2)</span>
-                                <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                  isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                  isSkipped ? 'bg-amber-100 text-amber-800' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                  {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                </span>
-                              </div>
-                              <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                              
-                              {isSkipped ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                  <div className="p-3 rounded-lg border border-amber-250 bg-amber-50 text-xs text-amber-950">
-                                    <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
+                              <div className="pt-2 border-t border-slate-200/60">
+                                <span className="text-[10px] font-bold text-indigo-900 block mb-1">BÀI LÀM CỦA THÍ SINH:</span>
+                                {isSkipped ? (
+                                  <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-950 font-sans leading-relaxed">
+                                    <span className="font-extrabold block text-[9px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
                                     <span className="italic font-bold block mt-1">
-                                      Lý do: {selectedCandidate.answers?.listeningPart2?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                      Lý do: {note || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
                                     </span>
                                   </div>
-                                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 flex flex-col justify-center">
-                                    <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
-                                    <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-850">"{q.answer}"</span>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                  <div className={`p-3 rounded-lg border text-xs ${isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
-                                    <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN HỌC SINH NHẬP:</span>
-                                    <span className="font-mono text-sm font-bold block mt-0.5">{ans ? `"${ans}"` : <span className="italic text-slate-400 font-normal">Bỏ trống</span>}</span>
-                                  </div>
-                                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800">
-                                    <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
-                                    <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-800">"{q.answer}"</span>
-                                  </div>
-                                </div>
-                              )}
+                                ) : (
+                                  <p className="font-sans italic text-slate-700 bg-white p-2.5 rounded border border-slate-200 select-all leading-relaxed whitespace-pre-wrap font-medium">
+                                    {answer ? `"${answer}"` : <span className="text-red-500 font-normal">Thí sinh bỏ trống không làm câu này.</span>}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
+                      </div>
+
+                      {/* Grade box */}
+                      <form className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4" onSubmit={handleGradeWriting}>
+                        <h5 className="font-bold text-xs text-indigo-950 uppercase border-b border-slate-200 pb-2">CHẤM ĐIỂM THỦ CÔNG</h5>
+
+                        {gradingSuccess && (
+                          <div className="bg-green-50 text-green-700 p-3 rounded-xl border border-green-200 text-[11px] font-bold flex items-center gap-1">
+                            <Check className="w-4 h-4" /> Đã lưu điểm và cập nhật học lực thí sinh thành công!
+                          </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Điểm thi viết (Thang điểm từ 0 đến 10)</label>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="10"
+                            required
+                            value={writingScore}
+                            onChange={(e) => setWritingScore(parseFloat(e.target.value) || 0)}
+                            className="w-full px-4 py-3 border border-slate-200 bg-white rounded-xl text-sm font-bold text-indigo-950 focus:outline-none focus:ring-1 focus:ring-indigo-900"
+                          />
+                          <p className="text-[9px] text-slate-400 leading-normal">* Điểm tổng kết kỹ năng Viết của thí sinh.</p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Nhận xét chi tiết của giáo viên</label>
+                          <textarea
+                            rows={6}
+                            placeholder="Nhập nhận xét của giáo viên..."
+                            value={writingComment}
+                            onChange={(e) => setWritingComment(e.target.value)}
+                            className="w-full p-3 border border-slate-200 bg-white rounded-xl text-xs font-sans text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-900 resize-y"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={gradingLoading}
+                          className="w-full bg-indigo-900 hover:bg-indigo-850 disabled:bg-indigo-300 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shadow"
+                        >
+                          <Save className="w-4 h-4" /> {gradingLoading ? 'Đang lưu điểm...' : 'Lưu điểm và Nhận xét'}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. AUTO GRADED QUESTIONS AUDIT DETAILS */}
+                {hasAutoGradedSections && (
+                  <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+                    <div className="border-b border-slate-100 pb-4">
+                      <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-indigo-950" /> CHI TIẾT BÀI LÀM TỪNG CÂU (DETAILED ANSWERS AUDIT)
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Xem chi tiết từng câu hỏi thực tế của kỳ thi này, các đáp án học sinh đã chọn và đáp án đúng. Đúng hiện màu xanh lá, sai hiện màu đỏ.
+                      </p>
+                    </div>
+
+                    {/* Tab switcher: Only render tabs for sections that actually exist */}
+                    <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 select-none">
+                      {availableTabs.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setActiveAuditTab(tab.id as any)}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                            currentAuditTab === tab.id ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {tab.label} ({tab.score}/{tab.count})
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Audit list */}
+                    <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+                      {currentAuditTab === 'listening' && hasListening && (
+                        <div className="space-y-4">
+                          {listeningP1List.length > 0 && (
+                            <div className="space-y-4">
+                              <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
+                                PART 1: MULTIPLE CHOICE QUESTIONS (CÂU 1 - {listeningP1List.length})
+                              </div>
+                              {listeningP1List.map((q, idx) => {
+                                const ans = selectedCandidate.answers?.listeningPart1?.[q.id] || '';
+                              const isSkipped = ans === '__SKIPPED__';
+                              const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
+                              return (
+                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
+                                  'bg-rose-50/40 border-rose-150'
+                                }`}>
+                                  <div className="flex justify-between items-start">
+                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Listening Part 1)</span>
+                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                      isSkipped ? 'bg-amber-100 text-amber-800' :
+                                      'bg-rose-100 text-rose-800'
+                                    }`}>
+                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                    </span>
+                                  </div>
+                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                  
+                                  {isSkipped ? (
+                                    <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                      <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
+                                      <span className="italic font-bold block mt-1">
+                                        Lý do: {selectedCandidate.answers?.listeningPart1?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                                      {q.options?.map((opt, oIdx) => {
+                                        const letter = String.fromCharCode(65 + oIdx);
+                                        const isSelected = ans.trim().toUpperCase() === letter;
+                                        const isCorrectLetter = q.answer.toUpperCase() === letter;
+                                        return (
+                                          <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                            isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                            isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                            !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                            'bg-white border-slate-200 text-slate-600'
+                                          }`}>
+                                            <span className="font-bold mr-1.5">{letter}.</span> {opt}
+                                            {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                            {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {listeningP2List.length > 0 && (
+                          <div className="space-y-4">
+                            <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
+                              PART 2: FILL IN THE BLANKS (CÂU {listeningP1List.length + 1} - {totalListeningCount})
+                            </div>
+                            {listeningP2List.map((q, idx) => {
+                              const ans = selectedCandidate.answers?.listeningPart2?.[q.id] || '';
+                              const isSkipped = ans === '__SKIPPED__';
+                              const isCorrect = !isSkipped && checkAnswerClient(ans, q.answer);
+                              return (
+                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
+                                  'bg-rose-50/40 border-rose-150'
+                                }`}>
+                                  <div className="flex justify-between items-start">
+                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + listeningP1List.length + 1} (Listening Part 2)</span>
+                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                      isSkipped ? 'bg-amber-100 text-amber-800' :
+                                      'bg-rose-100 text-rose-800'
+                                    }`}>
+                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                    </span>
+                                  </div>
+                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                  
+                                  {isSkipped ? (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                      <div className="p-3 rounded-lg border border-amber-250 bg-amber-50 text-xs text-amber-950">
+                                        <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
+                                        <span className="italic font-bold block mt-1">
+                                          Lý do: {selectedCandidate.answers?.listeningPart2?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                        </span>
+                                      </div>
+                                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 flex flex-col justify-center">
+                                        <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
+                                        <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-850">"{q.answer}"</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                      <div className={`p-3 rounded-lg border text-xs ${isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
+                                        <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN HỌC SINH NHẬP:</span>
+                                        <span className="font-mono text-sm font-bold block mt-0.5">{ans ? `"${ans}"` : <span className="italic text-slate-400 font-normal">Bỏ trống</span>}</span>
+                                      </div>
+                                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800">
+                                        <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
+                                        <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-800">"{q.answer}"</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
 
-                    {activeAuditTab === 'grammar' && (
+                    {currentAuditTab === 'grammar' && hasGrammar && (
                       <div className="space-y-4">
-                        {GRAMMAR_QUESTIONS.map((q, idx) => {
+                        {grammarQuestionsList.map((q, idx) => {
                           const ans = selectedCandidate.answers?.grammar?.[q.id] || '';
                           const isSkipped = ans === '__SKIPPED__';
                           const isCorrect = !isSkipped && (q.type === 'mcq'
@@ -4132,7 +4306,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                             : checkAnswerClient(ans, q.answer));
                           
                           return (
-                            <div key={q.id} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                            <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
                               isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
                               isSkipped ? 'bg-amber-50/20 border-amber-200' :
                               'bg-rose-50/40 border-rose-150'
@@ -4195,15 +4369,15 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                       </div>
                     )}
 
-                    {activeAuditTab === 'vocabulary' && (
+                    {currentAuditTab === 'vocabulary' && hasVocabulary && (
                       <div className="space-y-4">
-                        {VOCABULARY_QUESTIONS.map((q, idx) => {
+                        {vocabQuestionsList.map((q, idx) => {
                           const ans = selectedCandidate.answers?.vocabulary?.[q.id] || '';
                           const isSkipped = ans === '__SKIPPED__';
                           const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
                           
                           return (
-                            <div key={q.id} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                            <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
                               isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
                               isSkipped ? 'bg-amber-50/20 border-amber-200' :
                               'bg-rose-50/40 border-rose-150'
@@ -4230,7 +4404,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                                 </div>
                               ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-                                  {q.options.map((opt, oIdx) => {
+                                  {q.options?.map((opt, oIdx) => {
                                     const letter = String.fromCharCode(65 + oIdx);
                                     const isSelected = ans.trim().toUpperCase() === letter;
                                     const isCorrectLetter = q.answer.toUpperCase() === letter;
@@ -4255,140 +4429,152 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                       </div>
                     )}
 
-                    {activeAuditTab === 'reading' && (
+                    {currentAuditTab === 'reading' && hasReading && (
                       <div className="space-y-4">
                         {/* Reading passage display */}
-                        <div className="bg-amber-50/50 border border-amber-200/80 rounded-xl p-5 mb-4 space-y-3 dark:bg-slate-850 dark:border-amber-900/40">
-                          <h6 className="font-extrabold text-sm text-amber-900 dark:text-amber-400 border-b border-amber-200/60 dark:border-amber-900/20 pb-1.5 uppercase">
-                            BÀI ĐỌC: {READING_PASSAGE.title}
-                          </h6>
-                          <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
-                            {READING_PASSAGE.text}
+                        {readingPassageData?.text && (
+                          <div className="bg-amber-50/50 border border-amber-200/80 rounded-xl p-5 mb-4 space-y-3 dark:bg-slate-850 dark:border-amber-900/40">
+                            <h6 className="font-extrabold text-sm text-amber-900 dark:text-amber-400 border-b border-amber-200/60 dark:border-amber-900/20 pb-1.5 uppercase">
+                              BÀI ĐỌC: {readingPassageData?.title || 'English Reading Passage'}
+                            </h6>
+                            <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                              {readingPassageData?.text}
+                            </div>
                           </div>
-                        </div>
+                        )}
 
-                        <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
-                          PART A: MULTIPLE CHOICE QUESTIONS (CÂU 1 - 2)
-                        </div>
-                        {READING_PASSAGE.questionsPartA.map((q, idx) => {
-                          const ans = selectedCandidate.answers?.readingPartA?.[q.id] || '';
-                          const isSkipped = ans === '__SKIPPED__';
-                          const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
-                          return (
-                            <div key={q.id} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                              isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                              isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                              'bg-rose-50/40 border-rose-150'
-                            }`}>
-                              <div className="flex justify-between items-start">
-                                <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Reading Part A)</span>
-                                <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                  isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                  isSkipped ? 'bg-amber-100 text-amber-800' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                  {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                </span>
-                              </div>
-                              <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                              
-                              {isSkipped ? (
-                                <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                  <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                  <span className="italic font-bold block mt-1">
-                                    Lý do: {selectedCandidate.answers?.readingPartA?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-                                  {q.options.map((opt, oIdx) => {
-                                    const letter = String.fromCharCode(65 + oIdx);
-                                    const isSelected = ans.trim().toUpperCase() === letter;
-                                    const isCorrectLetter = q.answer.toUpperCase() === letter;
-                                    return (
-                                      <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                        isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                        isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                        !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                        'bg-white border-slate-200 text-slate-600'
-                                      }`}>
-                                        <span className="font-bold mr-1">{letter}.</span> {opt}
-                                        {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                        {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                        {readingPartAList.length > 0 && (
+                          <div className="space-y-4">
+                            <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
+                              PART A: MULTIPLE CHOICE QUESTIONS (CÂU 1 - {readingPartAList.length})
                             </div>
-                          );
-                        })}
+                            {readingPartAList.map((q, idx) => {
+                              const ans = selectedCandidate.answers?.readingPartA?.[q.id] || '';
+                              const isSkipped = ans === '__SKIPPED__';
+                              const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
+                              return (
+                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
+                                  'bg-rose-50/40 border-rose-150'
+                                }`}>
+                                  <div className="flex justify-between items-start">
+                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Reading Part A)</span>
+                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                      isSkipped ? 'bg-amber-100 text-amber-800' :
+                                      'bg-rose-100 text-rose-800'
+                                    }`}>
+                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                    </span>
+                                  </div>
+                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                  
+                                  {isSkipped ? (
+                                    <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                      <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
+                                      <span className="italic font-bold block mt-1">
+                                        Lý do: {selectedCandidate.answers?.readingPartA?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                                      {q.options?.map((opt, oIdx) => {
+                                        const letter = String.fromCharCode(65 + oIdx);
+                                        const isSelected = ans.trim().toUpperCase() === letter;
+                                        const isCorrectLetter = q.answer.toUpperCase() === letter;
+                                        return (
+                                          <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                            isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                            isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                            !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                            'bg-white border-slate-200 text-slate-600'
+                                          }`}>
+                                            <span className="font-bold mr-1">{letter}.</span> {opt}
+                                            {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                            {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
 
-                        <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
-                          PART B: TRUE / FALSE / NOT GIVEN (CÂU 3 - 6)
-                        </div>
-                        {READING_PASSAGE.questionsPartB.map((q, idx) => {
-                          const ans = selectedCandidate.answers?.readingPartB?.[q.id] || '';
-                          const isSkipped = ans === '__SKIPPED__';
-                          const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
-                          return (
-                            <div key={q.id} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                              isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                              isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                              'bg-rose-50/40 border-rose-150'
-                            }`}>
-                              <div className="flex justify-between items-start">
-                                <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 3} (Reading Part B)</span>
-                                <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                  isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                  isSkipped ? 'bg-amber-100 text-amber-800' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                  {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                </span>
-                              </div>
-                              <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                              
-                              {isSkipped ? (
-                                <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                  <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                  <span className="italic font-bold block mt-1">
-                                    Lý do: {selectedCandidate.answers?.readingPartB?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                                  {q.options.map((opt, oIdx) => {
-                                    const letter = String.fromCharCode(65 + oIdx);
-                                    const isSelected = ans.trim().toUpperCase() === opt.toUpperCase();
-                                    const isCorrectLetter = q.answer.toUpperCase() === opt.toUpperCase();
-                                    return (
-                                      <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                        isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                        isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                        !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                        'bg-white border-slate-200 text-slate-600'
-                                      }`}>
-                                        <span className="font-bold mr-1">{letter}.</span> {opt}
-                                        {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                        {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                        {readingPartBList.length > 0 && (
+                          <div className="space-y-4">
+                            <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
+                              PART B: TRUE / FALSE / NOT GIVEN (CÂU {readingPartAList.length + 1} - {totalReadingCount})
                             </div>
-                          );
-                        })}
+                            {readingPartBList.map((q, idx) => {
+                              const ans = selectedCandidate.answers?.readingPartB?.[q.id] || '';
+                              const isSkipped = ans === '__SKIPPED__';
+                              const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
+                              return (
+                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
+                                  'bg-rose-50/40 border-rose-150'
+                                }`}>
+                                  <div className="flex justify-between items-start">
+                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + readingPartAList.length + 1} (Reading Part B)</span>
+                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                      isSkipped ? 'bg-amber-100 text-amber-800' :
+                                      'bg-rose-100 text-rose-800'
+                                    }`}>
+                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                    </span>
+                                  </div>
+                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                  
+                                  {isSkipped ? (
+                                    <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                      <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
+                                      <span className="italic font-bold block mt-1">
+                                        Lý do: {selectedCandidate.answers?.readingPartB?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                                      {q.options?.map((opt, oIdx) => {
+                                        const letter = String.fromCharCode(65 + oIdx);
+                                        const isSelected = ans.trim().toUpperCase() === opt.toUpperCase();
+                                        const isCorrectLetter = q.answer.toUpperCase() === opt.toUpperCase();
+                                        return (
+                                          <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                            isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                            isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                            !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                            'bg-white border-slate-200 text-slate-600'
+                                          }`}>
+                                            <span className="font-bold mr-1">{letter}.</span> {opt}
+                                            {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                            {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
+              )}
 
               </div>
-            )}
+              );
+            })()}
 
           </div>
         )) : adminTab === 'materials' ? (

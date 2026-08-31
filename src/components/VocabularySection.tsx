@@ -87,37 +87,35 @@ export default function VocabularySection({
   return (
     <div id="vocabulary-section-wrapper" className="space-y-6">
       
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* 5-Question Paginated Canvas */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6 w-full">
         
-        {/* Left Side: 5-Question Paginated Canvas */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
-          
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-indigo-900" />
-              <h2 className="text-base font-black text-slate-800 uppercase">SECTION 3: VOCABULARY (TỪ VỰNG)</h2>
-            </div>
-            
-            {/* Page indicator badges */}
-            <div className="flex items-center gap-1">
-              {Array.from({ length: totalPages }).map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handlePageChange(idx)}
-                  className={`w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center border transition-all cursor-pointer select-none ${
-                    currentPage === idx
-                      ? 'bg-indigo-900 text-white border-indigo-900 shadow-sm'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {idx + 1}
-                </button>
-              ))}
-            </div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-indigo-900" />
+            <h2 className="text-base font-black text-slate-800 uppercase">KỸ NĂNG: TỪ VỰNG (VOCABULARY)</h2>
           </div>
+          
+          {/* Page indicator badges */}
+          <div className="flex items-center gap-1">
+            {Array.from({ length: totalPages }).map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => handlePageChange(idx)}
+                className={`w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center border transition-all cursor-pointer select-none ${
+                  currentPage === idx
+                    ? 'bg-indigo-900 text-white border-indigo-900 shadow-sm'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {idx + 1}
+              </button>
+            ))}
+          </div>
+        </div>
 
-          {/* List of 5 Vocabulary Questions */}
-          <div className="space-y-6 max-h-[600px] overflow-y-auto pr-1 scrollbar-thin">
+        {/* List of 5 Vocabulary Questions */}
+        <div className="space-y-6 max-h-[600px] overflow-y-auto pr-1 scrollbar-thin">
             {getPageQuestions().map((q, localIdx) => {
               const globalIdx = currentPage * QUESTIONS_PER_PAGE + localIdx;
               const currentAnswer = answers[q.id] || '';
@@ -253,26 +251,6 @@ export default function VocabularySection({
           </div>
 
         </div>
-
-        {/* Right Side Info Box */}
-        <div className="lg:col-span-4 bg-indigo-950 text-white rounded-2xl p-5 shadow-md border border-indigo-900 space-y-4">
-          <h3 className="font-bold flex items-center gap-1.5 text-xs uppercase tracking-wider border-b border-indigo-900 pb-2.5 text-indigo-200">
-            <HelpCircle className="w-4 h-4" /> Hướng dẫn làm bài
-          </h3>
-          <ul className="text-xs space-y-3 leading-relaxed text-indigo-100/95 list-disc list-inside font-medium">
-            <li>
-              Các câu hỏi được nhóm <strong className="text-white">5 câu chung một lượt hiển thị</strong> trên màn hình để bạn dễ bao quát và so sánh.
-            </li>
-            <li>
-              Bạn có thể dễ dàng dùng nút <strong className="text-white">Trang trước</strong> và <strong className="text-white">Trang sau</strong> để quay trở lại sửa đổi câu trả lời bất cứ lúc nào.
-            </li>
-            <li>
-              Để di chuyển nhanh đến một câu hỏi bất kỳ, hãy nhấp chuột vào số câu hỏi tương ứng trong bảng <strong className="text-white">Question Navigator</strong> ở bên phải.
-            </li>
-          </ul>
-        </div>
-
-      </div>
 
     </div>
   );

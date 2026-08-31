@@ -47,6 +47,14 @@ export default function ReadingSection({
   return (
     <div id="reading-section-wrapper" className="space-y-6">
       
+      {/* Skill Header */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <BookOpen className="w-5 h-5 text-indigo-900" />
+          <h2 className="text-base font-black text-slate-800 uppercase">KỸ NĂNG: ĐỌC (READING)</h2>
+        </div>
+      </div>
+
       {/* 2-Pane Split Grid for IELTS exam feel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         

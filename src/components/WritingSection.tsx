@@ -60,7 +60,7 @@ export default function WritingSection({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-4 mb-4 gap-3">
           <div className="flex items-center gap-2">
             <PenTool className="w-5 h-5 text-indigo-900" />
-            <h2 className="text-lg font-bold text-slate-800">SECTION 4: WRITING (DỊCH VIẾT)</h2>
+            <h2 className="text-base font-black text-slate-800 uppercase">KỸ NĂNG: VIẾT (WRITING)</h2>
           </div>
 
           {/* Autosave status indicator */}

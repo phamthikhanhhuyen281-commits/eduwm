@@ -296,6 +296,14 @@ export default function SpeakingSection({
   return (
     <div id="speaking-section-wrapper" className="space-y-8">
       
+      {/* Skill Header */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Mic className="w-5 h-5 text-indigo-900" />
+          <h2 className="text-base font-black text-slate-800 uppercase">KỸ NĂNG: NÓI (SPEAKING)</h2>
+        </div>
+      </div>
+
       {/* Mic Authorization Check */}
       {permission === false && (
         <div className="bg-red-50 border-l-4 border-red-600 p-4 rounded-xl flex items-center gap-3">
@@ -312,7 +320,7 @@ export default function SpeakingSection({
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-indigo-900" />
-              <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">SPEAKING BÀI 1: ĐỌC THÀNH TIẾNG ĐOẠN VĂN</h3>
+              <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">PHẦN 1: ĐỌC THÀNH TIẾNG ĐOẠN VĂN</h3>
             </div>
             <span className="text-xs font-mono font-bold bg-indigo-50 text-indigo-900 px-2.5 py-1 rounded-md">
               Chỉ được ghi âm 1 lần
@@ -399,7 +407,7 @@ export default function SpeakingSection({
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <Volume2 className="w-5 h-5 text-indigo-900" />
-              <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">SPEAKING BÀI 2: TRẢ LỜI CÂU HỎI PHỎNG VẤN</h3>
+              <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">PHẦN 2: TRẢ LỜI CÂU HỎI PHỎNG VẤN</h3>
             </div>
             <span className="text-xs font-mono font-bold bg-amber-50 text-amber-850 px-2.5 py-1 rounded-md">
               Nghe câu hỏi + Ghi âm 1 lần duy nhất

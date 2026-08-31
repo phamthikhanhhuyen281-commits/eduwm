@@ -37,6 +37,9 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { renderAsync } from 'docx-preview';
 import * as pdfjsLib from 'pdfjs-dist';
+import { storageService } from '../services/storageService';
+import { materialService } from '../services/materialService';
+import { UploadCloud } from 'lucide-react';
 
 // Configure PDF.js worker
 try {
@@ -112,13 +115,16 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
   // Viewer Mode Fallback
   const [viewerMode, setViewerMode] = useState<'native' | 'iframe'>('native');
   const [iframeKey, setIframeKey] = useState<number>(0);
+  const [overrideUrl, setOverrideUrl] = useState<string | null>(null);
+  const [isUploadingReplacement, setIsUploadingReplacement] = useState<boolean>(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
   const docxContainerRef = useRef<HTMLDivElement>(null);
   const singlePageCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Parse and normalize URLs and file extensions
-  const cleanUrl = (material?.url || '').trim();
+  const cleanUrl = (overrideUrl || material?.url || '').trim();
   const cleanUrlNoQuery = cleanUrl.split('?')[0].split('#')[0].toLowerCase();
   const typeLower = (material?.type || '').trim().toLowerCase();
   const fileNameLower = (material?.fileName || '').trim().toLowerCase();
@@ -296,25 +302,13 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
       fileNameLower.endsWith('.md'));
 
   // Universal ArrayBuffer Fetcher with multi-tier resilient fallback
-  const fetchDocumentArrayBuffer = useCallback(async (url: string): Promise<ArrayBuffer> => {
+  const fetchDocumentArrayBuffer = useCallback(async (url: string, fileName?: string, materialId?: string): Promise<ArrayBuffer> => {
     if (!url) throw new Error('Không tìm thấy đường dẫn tệp tin.');
 
-    // 1. Native fetch works for data: URIs, blob: URIs, and relative URLs (/recordings/...)
-    if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/')) {
-      try {
-        const res = await fetch(url);
-        if (res.ok) {
-          return await res.arrayBuffer();
-        }
-      } catch (fetchErr) {
-        console.warn('Native fetch failed for data/blob/relative URL, falling back to manual decode:', fetchErr);
-      }
-    }
-
-    // 2. Base64 Data URI manual decode fallback
-    if (url.startsWith('data:')) {
-      const commaIdx = url.indexOf(',');
-      const base64Content = commaIdx >= 0 ? url.slice(commaIdx + 1) : url;
+    // Helper: Base64 decode to ArrayBuffer
+    const decodeBase64ToArrayBuffer = (base64Str: string): ArrayBuffer => {
+      const commaIdx = base64Str.indexOf(',');
+      const base64Content = commaIdx >= 0 ? base64Str.slice(commaIdx + 1) : base64Str;
       const cleanBase64 = base64Content.trim().replace(/\s/g, '');
       const binaryString = window.atob(cleanBase64);
       const len = binaryString.length;
@@ -323,33 +317,134 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
         bytes[i] = binaryString.charCodeAt(i);
       }
       return bytes.buffer;
+    };
+
+    // 1. Base64 Data URI manual decode (instant, 100% reliable)
+    if (url.startsWith('data:')) {
+      return decodeBase64ToArrayBuffer(url);
     }
 
-    // 3. Local relative URL
-    if (url.startsWith('/')) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Lỗi đọc tệp từ máy chủ (${res.status})`);
-      return await res.arrayBuffer();
+    // 2. Blob URI
+    if (url.startsWith('blob:')) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) return await res.arrayBuffer();
+      } catch (e) {}
     }
 
-    // 4. Try Direct Fetch for remote URL (CORS allowed)
+    // 3. Try Native fetch for relative or absolute URLs
     try {
-      const directRes = await fetch(url, { mode: 'cors' });
-      if (directRes.ok) {
-        return await directRes.arrayBuffer();
+      const res = await fetch(url, { mode: 'cors' });
+      if (res.ok) {
+        const buf = await res.arrayBuffer();
+        // Check if the response is actually an HTML error page (SPA rewrite)
+        if (buf.byteLength < 5000) {
+          const header = new Uint8Array(buf.slice(0, 15));
+          const strHeader = String.fromCharCode(...header).toLowerCase();
+          if (strHeader.includes('<!doctype') || strHeader.includes('<html')) {
+            throw new Error('Máy chủ trả về trang HTML thay vì file tài liệu.');
+          }
+        }
+        return buf;
       }
-    } catch (e) {
-      console.warn('Direct fetch failed, trying backend file-proxy...', e);
+    } catch (fetchErr) {
+      console.warn('Native fetch failed for URL, checking IndexedDB cache:', fetchErr);
     }
 
-    // 5. Backend Server Proxy Fallback
-    const proxyUrl = `/api/file-proxy?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyUrl);
-    if (!res.ok) {
-      throw new Error(`Không thể tải tệp tin (${res.status} ${res.statusText})`);
+    // 4. Try IndexedDB cache fallback (e.g. previously saved files)
+    try {
+      if (fileName) {
+        const local = await storageService.getLocalFile(`file_${fileName}`);
+        if (local) {
+          if (typeof local === 'string') return decodeBase64ToArrayBuffer(local);
+          if (local instanceof Blob) return await local.arrayBuffer();
+        }
+      }
+      if (materialId) {
+        const local = await storageService.getLocalFile(`material_${materialId}`);
+        if (local) {
+          if (typeof local === 'string') return decodeBase64ToArrayBuffer(local);
+          if (local instanceof Blob) return await local.arrayBuffer();
+        }
+      }
+    } catch (idbErr) {}
+
+    // 5. Remote URL file-proxy fallback
+    if (url.startsWith('http')) {
+      try {
+        const proxyUrl = `/api/file-proxy?url=${encodeURIComponent(url)}`;
+        const res = await fetch(proxyUrl);
+        if (res.ok) return await res.arrayBuffer();
+      } catch (e) {}
     }
-    return await res.arrayBuffer();
+
+    // 6. Descriptive guidance for local server files on Vercel
+    if (url.startsWith('/recordings/') || url.startsWith('/')) {
+      throw new Error('Tệp này trước đây được lưu trên ổ đĩa máy chủ cục bộ (local). Khi triển khai lên Vercel tĩnh, vui lòng bấm nút "Chọn lại tệp từ máy tính" bên dưới để mở ngay và lưu trữ vĩnh viễn trên đám mây.');
+    }
+
+    throw new Error('Lỗi đọc tệp từ máy chủ (404)');
   }, []);
+
+  // Handler for uploading/replacing missing file directly inside modal
+  const handleManualFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsUploadingReplacement(true);
+      setError(null);
+      setLoading(true);
+      setLoadingProgress('Đang đọc và lưu tệp tin mới...');
+
+      // 1. Read locally as Base64 Data URL immediately for instant rendering
+      const base64: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Đọc file thất bại'));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // 2. Set override URL so modal parses the doc immediately
+      setOverrideUrl(base64);
+
+      // 3. Save to IndexedDB
+      await storageService.saveLocalFile(`file_${file.name}`, base64);
+      if (material?.id) {
+        await storageService.saveLocalFile(`material_${material.id}`, base64);
+      }
+
+      // 4. Upload to Firebase Storage in background and update Firestore
+      storageService.uploadFile(file, 'materials')
+        .then(async (uploadedCloudUrl) => {
+          const finalUrl = uploadedCloudUrl || base64;
+          setOverrideUrl(finalUrl);
+
+          if (material?.id) {
+            await materialService.saveMaterial({
+              id: material.id,
+              title: material.title || file.name.replace(/\.[^/.]+$/, ''),
+              description: material.description || '',
+              url: finalUrl,
+              type: (material.type || 'docx') as any,
+              fileName: file.name,
+              fileSize: file.size,
+              createdAt: material.createdAt || new Date().toISOString()
+            });
+          }
+        })
+        .catch((uploadErr) => {
+          console.warn('Background cloud upload error:', uploadErr);
+        });
+
+    } catch (err: any) {
+      console.error('Failed to replace file:', err);
+      setError('Lỗi khi nạp tệp từ máy: ' + (err.message || ''));
+    } finally {
+      setIsUploadingReplacement(false);
+      setLoading(false);
+    }
+  };
 
   // Update Image Source when opening image
   useEffect(() => {
@@ -397,7 +492,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
       setLoadingProgress('Đang tải và chuẩn bị tài liệu PDF...');
       const loadPdf = async () => {
         try {
-          const buffer = await fetchDocumentArrayBuffer(cleanUrl);
+          const buffer = await fetchDocumentArrayBuffer(cleanUrl, material?.fileName, material?.id);
           const loadedDoc = await pdfjsLib.getDocument({
             data: new Uint8Array(buffer),
             cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
@@ -429,7 +524,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
       setLoadingProgress('Đang phân tích cấu trúc tài liệu Word...');
       const loadWord = async () => {
         try {
-          const arrayBuffer = await fetchDocumentArrayBuffer(cleanUrl);
+          const arrayBuffer = await fetchDocumentArrayBuffer(cleanUrl, material?.fileName, material?.id);
           let parsedAny = false;
 
           // Attempt 1: Mammoth HTML conversion with embedded images support
@@ -560,7 +655,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
       setLoadingProgress('Đang nạp bảng tính Excel...');
       const loadExcel = async () => {
         try {
-          const arrayBuffer = await fetchDocumentArrayBuffer(cleanUrl);
+          const arrayBuffer = await fetchDocumentArrayBuffer(cleanUrl, material?.fileName, material?.id);
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
           const sheets: { name: string; data: any[][] }[] = [];
@@ -596,7 +691,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
       setLoadingProgress('Đang đọc các trang trình chiếu PowerPoint...');
       const loadPptx = async () => {
         try {
-          const arrayBuffer = await fetchDocumentArrayBuffer(cleanUrl);
+          const arrayBuffer = await fetchDocumentArrayBuffer(cleanUrl, material?.fileName, material?.id);
           const zip = await JSZip.loadAsync(arrayBuffer);
           const slideFiles = Object.keys(zip.files).filter(
             (fileName) => fileName.startsWith('ppt/slides/slide') && fileName.endsWith('.xml')
@@ -1115,28 +1210,56 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
 
             {/* ERROR STATE */}
             {!loading && error && (
-              <div className="bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900 rounded-3xl p-8 max-w-md text-center space-y-4 shadow-lg my-auto">
-                <div className="w-16 h-16 bg-amber-50 dark:bg-amber-950/50 text-amber-600 rounded-full flex items-center justify-center mx-auto">
+              <div className="bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900 rounded-3xl p-8 max-w-lg text-center space-y-4 shadow-xl my-auto">
+                <div className="w-16 h-16 bg-amber-50 dark:bg-amber-950/50 text-amber-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
                   <AlertCircle className="w-8 h-8" />
                 </div>
-                <h4 className="text-base font-bold text-slate-900 dark:text-white">Không thể hiển thị định dạng này trực tiếp</h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{error}</p>
-                <div className="flex flex-col gap-2 pt-2">
-                  <a
-                    href={material.url}
-                    download={material.fileName || material.title}
-                    className="w-full py-3 bg-indigo-900 hover:bg-indigo-850 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" /> Tải tệp tin về máy
-                  </a>
-                  {material.url.startsWith('http') && (
+                <h4 className="text-base font-bold text-slate-900 dark:text-white">Không thể mở tệp tin trực tiếp</h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 font-mono">
+                  {error}
+                </p>
+
+                <div className="flex flex-col gap-2.5 pt-2">
+                  <label className="w-full py-3 px-4 bg-indigo-900 hover:bg-indigo-850 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer">
+                    {isUploadingReplacement ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>Đang xử lý tệp...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="w-4 h-4" />
+                        <span>Chọn lại tệp từ máy tính để mở & lưu ngay</span>
+                      </>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="hidden"
+                      accept=".docx,.doc,.pdf,.xlsx,.xls,.pptx,.ppt,.txt,.png,.jpg,.jpeg,.mp3,.mp4"
+                      onChange={handleManualFileSelect}
+                      disabled={isUploadingReplacement}
+                    />
+                  </label>
+
+                  {material.url && !material.url.startsWith('/') && (
+                    <a
+                      href={material.url}
+                      download={material.fileName || material.title}
+                      className="w-full py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors border border-slate-200 dark:border-slate-600 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" /> Tải tệp tin về máy
+                    </a>
+                  )}
+
+                  {material.url && material.url.startsWith('http') && (
                     <a
                       href={material.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors border border-slate-200 dark:border-slate-600 cursor-pointer"
+                      className="w-full py-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-slate-600 dark:text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer"
                     >
-                      <ExternalLink className="w-4 h-4" /> Mở trong tab mới
+                      <ExternalLink className="w-4 h-4" /> Mở liên kết trong tab mới
                     </a>
                   )}
                 </div>

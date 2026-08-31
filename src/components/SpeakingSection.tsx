@@ -123,96 +123,90 @@ export default function SpeakingSection({
       mediaRecorder.onstop = async () => {
         setRecordingState(prev => ({ ...prev, [id]: 'saving' }));
         
-        const audioBlob = new Blob(audioChunks.current[id], { type: mimeType || mediaRecorder.mimeType || 'audio/webm' });
-        const localBlobUrl = URL.createObjectURL(audioBlob);
-        
-        let savedUrl = localBlobUrl;
         try {
-          // Upload audio blob with auto-retry and multi-tier server/cloud storage
-          savedUrl = await storageService.uploadAudioBlob(audioBlob, candidateId, id);
-        } catch (uploadErr) {
-          console.warn('Storage upload error, using local fallback:', uploadErr);
-          savedUrl = localBlobUrl;
-        }
-
-        // Store active playable URL
-        setAudioUrls(prev => ({ ...prev, [id]: savedUrl }));
-
-        // Map the audio path to the proper sub-field of answers
-        let answersUpdate: any = {};
-        if (id === 'speaking_p1') {
-          answersUpdate.speakingPart1 = { audioPath: savedUrl };
-        } else if (id === 'speaking_p2_q1') {
-          answersUpdate.speakingPart2 = { sp_1_audioPath: savedUrl };
-        } else if (id === 'speaking_p2_q2') {
-          answersUpdate.speakingPart2 = { sp_2_audioPath: savedUrl };
-        } else if (id === 'speaking_p2_q3') {
-          answersUpdate.speakingPart2 = { sp_3_audioPath: savedUrl };
-        }
-
-        // Update candidate document in Firestore / DB
-        try {
-          await candidateService.updateAnswers(candidateId, answersUpdate);
-        } catch (dbErr) {
-          console.warn('DB update failed for speaking answer, saving to local backup:', dbErr);
+          const audioBlob = new Blob(audioChunks.current[id], { type: mimeType || mediaRecorder.mimeType || 'audio/webm' });
+          const localBlobUrl = URL.createObjectURL(audioBlob);
+          
+          let savedUrl = localBlobUrl;
           try {
-            const backupKey = `offline_speaking_${candidateId}`;
-            const existingBackup = JSON.parse(localStorage.getItem(backupKey) || '{}');
-            localStorage.setItem(backupKey, JSON.stringify({ ...existingBackup, [id]: savedUrl }));
+            // Upload audio blob with auto-retry and multi-tier server/cloud/IndexedDB storage
+            savedUrl = await storageService.uploadAudioBlob(audioBlob, candidateId, id);
+          } catch (uploadErr) {
+            console.warn('Storage upload error, using local fallback:', uploadErr);
+            savedUrl = localBlobUrl;
+          }
+
+          // Store active playable URL
+          setAudioUrls(prev => ({ ...prev, [id]: savedUrl }));
+
+          // Map the audio path to the proper sub-field of answers
+          let answersUpdate: any = {};
+          if (id === 'speaking_p1') {
+            answersUpdate.speakingPart1 = { audioPath: savedUrl };
+          } else if (id === 'speaking_p2_q1') {
+            answersUpdate.speakingPart2 = { sp_1_audioPath: savedUrl };
+          } else if (id === 'speaking_p2_q2') {
+            answersUpdate.speakingPart2 = { sp_2_audioPath: savedUrl };
+          } else if (id === 'speaking_p2_q3') {
+            answersUpdate.speakingPart2 = { sp_3_audioPath: savedUrl };
+          }
+
+          // Update candidate document in Firestore / DB
+          try {
+            await candidateService.updateAnswers(candidateId, answersUpdate);
+          } catch (dbErr) {
+            console.warn('DB update failed for speaking answer, saving to local backup:', dbErr);
+            try {
+              const backupKey = `offline_speaking_${candidateId}`;
+              const existingBackup = JSON.parse(localStorage.getItem(backupKey) || '{}');
+              localStorage.setItem(backupKey, JSON.stringify({ ...existingBackup, [id]: savedUrl }));
+            } catch (e) {}
+          }
+          
+          // Mark answer as registered (save path as answer value in UI for tracking)
+          onAnswerChange(id, savedUrl);
+
+          // If speaking_p1 (Read Aloud), trigger Gemini AI Pronunciation scoring automatically in background
+          if (id === 'speaking_p1' && savedUrl) {
+            try {
+              fetch('/api/speaking/evaluate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  id: candidateId,
+                  audioPath: savedUrl,
+                  referenceText: speakingReadAloud?.text
+                })
+              })
+                .then(res => res.ok ? res.json() : Promise.reject())
+                .then(async data => {
+                  if (data?.evaluation) {
+                    try {
+                      const answersUpdateWithEvaluation = {
+                        speakingPart1: {
+                          audioPath: savedUrl,
+                          aiEvaluation: data.evaluation
+                        }
+                      };
+                      await candidateService.updateAnswers(candidateId, answersUpdateWithEvaluation);
+                    } catch (e) {}
+                    onRefreshSession();
+                  }
+                })
+                .catch(() => {
+                  // Ignore AI evaluation failure on Vercel/static deployments
+                });
+            } catch (evalErr) {}
+          }
+        } catch (generalErr) {
+          console.error('Error processing audio recording:', generalErr);
+        } finally {
+          // ALWAYS mark as done and release the mic hardware
+          setRecordingState(prev => ({ ...prev, [id]: 'done' }));
+          try {
+            stream.getTracks().forEach(track => track.stop());
           } catch (e) {}
         }
-        
-        // Mark answer as registered (save path as answer value in UI for tracking)
-        onAnswerChange(id, savedUrl);
-
-        // If speaking_p1 (Read Aloud), trigger Gemini AI Pronunciation scoring automatically in background
-        if (id === 'speaking_p1' && savedUrl) {
-          fetch('/api/speaking/evaluate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: candidateId,
-              audioPath: savedUrl,
-              referenceText: speakingReadAloud?.text
-            })
-          })
-            .then(res => res.json())
-            .then(async data => {
-              if (data.evaluation) {
-                try {
-                  const answersUpdateWithEvaluation = {
-                    speakingPart1: {
-                      audioPath: savedUrl,
-                      aiEvaluation: data.evaluation
-                    }
-                  };
-                  await candidateService.updateAnswers(candidateId, answersUpdateWithEvaluation);
-                } catch (e) {}
-                onRefreshSession();
-              }
-            })
-            .catch(() => {
-              if (typeof savedUrl === 'string' && savedUrl.startsWith('http')) {
-                speakingService.evaluateSpeakingAudio(savedUrl, speakingReadAloud.text)
-                  .then(async (evaluation) => {
-                    const answersUpdateWithEvaluation = {
-                      speakingPart1: {
-                        audioPath: savedUrl,
-                        aiEvaluation: evaluation
-                      }
-                    };
-                    await candidateService.updateAnswers(candidateId, answersUpdateWithEvaluation);
-                    onRefreshSession();
-                  })
-                  .catch(err => console.error('Gemini background evaluate failed:', err));
-              }
-            });
-        }
-
-        setRecordingState(prev => ({ ...prev, [id]: 'done' }));
-
-        // Stop all audio tracks to release the microphone hardware
-        stream.getTracks().forEach(track => track.stop());
       };
 
       mediaRecorder.start(250);
@@ -247,26 +241,47 @@ export default function SpeakingSection({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Check if recordings already exist in answers on mount/update
+  // Check if recordings already exist in answers or local storage on mount/update
   useEffect(() => {
     const newStates = { ...recordingState };
     const newUrls = { ...audioUrls };
 
-    if (answers['speaking_p1']) {
-      newStates['speaking_p1'] = 'done';
-      newUrls['speaking_p1'] = answers['speaking_p1'];
-    }
-    speakingQuestions.forEach((_, idx) => {
-      const id = `speaking_p2_q${idx + 1}`;
-      if (answers[id]) {
-        newStates[id] = 'done';
-        newUrls[id] = answers[id];
+    const restoreRecordings = async () => {
+      if (answers['speaking_p1']) {
+        newStates['speaking_p1'] = 'done';
+        newUrls['speaking_p1'] = answers['speaking_p1'];
+      } else if (candidateId) {
+        const local = await storageService.getLocalAudio(`${candidateId}_speaking_p1`);
+        if (local) {
+          const url = typeof local === 'string' ? local : URL.createObjectURL(local);
+          newStates['speaking_p1'] = 'done';
+          newUrls['speaking_p1'] = url;
+          onAnswerChange('speaking_p1', url);
+        }
       }
-    });
 
-    setRecordingState(newStates);
-    setAudioUrls(newUrls);
-  }, [answers]);
+      for (let idx = 0; idx < speakingQuestions.length; idx++) {
+        const id = `speaking_p2_q${idx + 1}`;
+        if (answers[id]) {
+          newStates[id] = 'done';
+          newUrls[id] = answers[id];
+        } else if (candidateId) {
+          const local = await storageService.getLocalAudio(`${candidateId}_${id}`);
+          if (local) {
+            const url = typeof local === 'string' ? local : URL.createObjectURL(local);
+            newStates[id] = 'done';
+            newUrls[id] = url;
+            onAnswerChange(id, url);
+          }
+        }
+      }
+
+      setRecordingState(newStates);
+      setAudioUrls(newUrls);
+    };
+
+    restoreRecordings();
+  }, [answers, candidateId]);
 
   // AI Voice speech synthesizer for Part 2 Questions - Stuck-free Chrome fix
   const handleAISpeak = (text: string) => {

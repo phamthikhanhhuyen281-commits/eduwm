@@ -30,6 +30,7 @@ import {
 import { Material } from '../services/materialService';
 import { Language, languageService } from '../services/languageService';
 import LanguageToggle from './LanguageToggle';
+import { DocumentReaderModal } from './DocumentReaderModal';
 
 interface StudentPortalProps {
   candidate: any;
@@ -575,162 +576,15 @@ export default function StudentPortal({
         </div>
       </footer>
 
-      {/* PREVIEW / PLAY MODAL */}
-      <AnimatePresence>
-        {previewMaterial && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-slate-900 rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh] border border-slate-200 dark:border-slate-800"
-            >
-              {/* Modal Header */}
-              <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-2 max-w-[80%]">
-                  {getMaterialIcon(previewMaterial)}
-                  <h3 className="text-sm font-bold truncate text-white">{previewMaterial.title}</h3>
-                </div>
-                <button
-                  onClick={() => {
-                    setPreviewMaterial(null);
-                    setPreviewType(null);
-                  }}
-                  className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Modal Body */}
-              <div className="p-6 overflow-y-auto flex-grow bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center">
-                {/* VIDEO PREVIEW */}
-                {previewType === 'video' && (
-                  <div className="w-full aspect-video bg-black rounded-2xl overflow-hidden shadow-md">
-                    {previewMaterial.url.includes('youtube') || previewMaterial.url.includes('youtu.be') ? (
-                      <iframe
-                        src={getYoutubeEmbedUrl(previewMaterial.url)}
-                        title={previewMaterial.title}
-                        className="w-full h-full border-0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                      />
-                    ) : (
-                      <video
-                        src={previewMaterial.url}
-                        controls
-                        autoPlay
-                        className="w-full h-full object-contain"
-                      />
-                    )}
-                  </div>
-                )}
-
-                {/* AUDIO PREVIEW */}
-                {previewType === 'audio' && (
-                  <div className="w-full max-w-md bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-6">
-                    <div className="w-20 h-20 bg-indigo-50 dark:bg-indigo-950 text-indigo-900 dark:text-indigo-300 rounded-full flex items-center justify-center mx-auto shadow-inner">
-                      <Headphones className="w-10 h-10" />
-                    </div>
-                    <div>
-                      <h4 className="text-base font-black text-slate-900 dark:text-slate-100">{previewMaterial.title}</h4>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{previewMaterial.description || 'Bài nghe âm thanh'}</p>
-                    </div>
-                    <audio
-                      src={audioError ? previewMaterial.url : getProxiedUrl(previewMaterial.url)}
-                      controls
-                      autoPlay
-                      onError={() => setAudioError(true)}
-                      className="w-full h-10"
-                    />
-                    {audioError && (
-                      <p className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 p-2 rounded-lg">
-                        Đang phát qua liên kết trực tiếp nếu âm thanh qua máy chủ gặp sự cố.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* IMAGE PREVIEW */}
-                {previewType === 'image' && (
-                  <div className="max-h-[70vh] flex items-center justify-center">
-                    <img
-                      src={previewMaterial.url}
-                      alt={previewMaterial.title}
-                      className="max-h-[65vh] max-w-full object-contain rounded-2xl shadow-md"
-                    />
-                  </div>
-                )}
-
-                {/* PDF PREVIEW */}
-                {previewType === 'pdf' && (
-                  <div className="w-full h-[65vh] flex flex-col items-center justify-center space-y-4">
-                    <iframe
-                      src={previewMaterial.url}
-                      title={previewMaterial.title}
-                      className="w-full h-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white"
-                    />
-                  </div>
-                )}
-
-                {/* WORD DOC PREVIEW / DOWNLOAD */}
-                {previewType === 'word' && (
-                  <div className="w-full max-w-md bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-6">
-                    <div className="w-20 h-20 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded-full flex items-center justify-center mx-auto shadow-inner">
-                      <FileCode className="w-10 h-10" />
-                    </div>
-                    <div>
-                      <h4 className="text-base font-black text-slate-900 dark:text-slate-100">{previewMaterial.title}</h4>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        File tài liệu Word (.docx / .doc). Bạn có thể tải về máy hoặc mở trực tiếp trên Office Online.
-                      </p>
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <a
-                        href={previewMaterial.url}
-                        download={previewMaterial.fileName || `${previewMaterial.title}.docx`}
-                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
-                      >
-                        <Download className="w-4 h-4" /> Tải file Word về máy
-                      </a>
-                      <a
-                        href={`https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(previewMaterial.url)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-750 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors border border-slate-200 dark:border-slate-700"
-                      >
-                        <ExternalLink className="w-4 h-4" /> Xem online qua Microsoft Office
-                      </a>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Modal Footer */}
-              <div className="bg-white dark:bg-slate-900 px-6 py-3.5 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-xs">
-                <a
-                  href={previewMaterial.url}
-                  download={previewMaterial.fileName || previewMaterial.title}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-indigo-900 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1"
-                >
-                  <Download className="w-3.5 h-3.5" /> Mở trong tab mới / Tải về
-                </a>
-                <button
-                  onClick={() => {
-                    setPreviewMaterial(null);
-                    setPreviewType(null);
-                  }}
-                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-bold text-slate-700 dark:text-slate-200 rounded-xl cursor-pointer"
-                >
-                  Đóng
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* PREVIEW / PLAY MODAL FOR ALL MEDIA & DOCX */}
+      <DocumentReaderModal
+        isOpen={!!previewMaterial}
+        material={previewMaterial}
+        onClose={() => {
+          setPreviewMaterial(null);
+          setPreviewType(null);
+        }}
+      />
     </div>
   );
 }

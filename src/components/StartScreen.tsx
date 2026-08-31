@@ -448,40 +448,6 @@ export default function StartScreen({ onRegister, loading, onAdminClick, setting
                 </p>
               </div>
 
-              {exams.length > 0 && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
-                     <FileText className="w-3.5 h-3.5 text-indigo-900 dark:text-indigo-400" /> {t('choose_exam')}
-                  </label>
-                  {isExamLocked ? (
-                    <div className="w-full px-4 py-3 bg-indigo-50 dark:bg-slate-900 border-2 border-indigo-200 dark:border-slate-700 text-indigo-950 dark:text-slate-200 font-bold rounded-xl flex items-center gap-2 text-xs">
-                      <span className="bg-indigo-900 text-white text-[10px] uppercase font-black px-1.5 py-0.5 rounded shrink-0">{t('link_locked')}</span>
-                      <span className="truncate">
-                        {exams.find((e) => e.id === selectedExamId)?.title || selectedExamId} ({exams.find((e) => e.id === selectedExamId)?.durationMinutes || 45} mins)
-                      </span>
-                    </div>
-                  ) : (
-                    <select
-                      id="reg-exam"
-                      value={selectedExamId}
-                      onChange={(e) => setSelectedExamId(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:border-indigo-900 dark:focus:border-indigo-400 focus:outline-none transition-colors"
-                    >
-                      {exams.map((ex) => (
-                        <option key={ex.id} value={ex.id}>
-                          {ex.title} ({ex.durationMinutes} mins)
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {isExamLocked && (
-                    <p className="text-[11px] text-indigo-800 dark:text-indigo-400 italic leading-snug">
-                      {t('direct_link_notice')}
-                    </p>
-                  )}
-                </div>
-              )}
-
               {/* Warnings check boxes/notice */}
               <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl text-xs text-slate-600 dark:text-slate-400 space-y-2 border border-slate-100 dark:border-slate-800">
                 <div className="flex items-start gap-2">

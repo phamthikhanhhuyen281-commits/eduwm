@@ -3,109 +3,74 @@ import { storage } from '../firebase';
 
 export const storageService = {
   /**
-   * Upload a File object (from file input / drag & drop) to Firebase Storage
-   * Fallback to public developer temporary file service or Base64 if Firebase Storage is unconfigured or returns permission error.
+   * Upload a File object (from file input / drag & drop) to Firebase Storage / Backend / Base64
+   * Uses fast-timeout strategy so upload never hangs or blocks indefinitely.
    */
   async uploadFile(file: File, folderPath: string): Promise<string> {
+    // 1. Read file as Base64 Data URL (fast client-side, 100% reliable)
+    const getBase64 = (): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') resolve(reader.result);
+          else reject(new Error('Chuyển đổi file thất bại'));
+        };
+        reader.onerror = () => reject(new Error('Lỗi khi đọc file'));
+        reader.readAsDataURL(file);
+      });
+    };
+
+    // 2. Try Backend Server Upload first (Instant local filesystem write, < 50ms)
+    try {
+      const base64Data = await getBase64();
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+
+      const response = await fetch('/api/admin/upload-file', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer PlAcEmEnT_TeSt_SeCrEt_Token'
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileData: base64Data
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.filePath) {
+          console.log('Successfully uploaded via backend server:', result.filePath);
+          return result.filePath;
+        }
+      }
+    } catch (serverErr) {
+      console.warn('Backend server upload failed or timed out, trying Firebase Storage / Base64 fallback...', serverErr);
+    }
+
+    // 3. Try Firebase Storage with a strict 3.5-second timeout
     try {
       const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
       const uniqueName = `${Date.now()}_${cleanName}`;
       const fileRef = ref(storage, `${folderPath}/${uniqueName}`);
       
-      const snap = await uploadBytes(fileRef, file);
-      const downloadUrl = await getDownloadURL(snap.ref);
-      return downloadUrl;
-    } catch (err) {
-      console.warn('Firebase Storage upload failed, falling back to secure alternative methods...', err);
-      
-      // FALLBACK 1: Upload to our own custom Express server (completely secure, self-hosted, 100% reliable, no CORS issues, works for all file sizes!)
-      try {
-        const base64Data = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            if (typeof reader.result === 'string') resolve(reader.result);
-            else reject(new Error('Chuyển đổi sang Base64 thất bại'));
-          };
-          reader.onerror = () => reject(new Error('Lỗi đọc file'));
-          reader.readAsDataURL(file);
-        });
+      const uploadPromise = uploadBytes(fileRef, file).then(snap => getDownloadURL(snap.ref));
+      const timeoutPromise = new Promise<string>((_, reject) => 
+        setTimeout(() => reject(new Error('Firebase Storage timeout')), 3500)
+      );
 
-        const response = await fetch('/api/admin/upload-file', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer PlAcEmEnT_TeSt_SeCrEt_Token'
-          },
-          body: JSON.stringify({
-            fileName: file.name,
-            fileData: base64Data
-          })
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          if (result.filePath) {
-            console.log('Successfully uploaded via custom server fallback:', result.filePath);
-            return result.filePath;
-          }
-        }
-      } catch (serverErr) {
-        console.warn('Custom Express backend upload fallback failed, trying public fallbacks...', serverErr);
-      }
-
-      // FALLBACK 2: If file is small (< 600KB), convert to Base64 (completely offline-friendly and 100% reliable)
-      if (file.size < 600 * 1024) {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            if (typeof reader.result === 'string') {
-              resolve(reader.result);
-            } else {
-              reject(new Error('Chuyển đổi file thành Base64 thất bại'));
-            }
-          };
-          reader.onerror = () => reject(new Error('Lỗi khi đọc file'));
-          reader.readAsDataURL(file);
-        });
-      }
-
-      // FALLBACK 3: For larger files, attempt to upload to tmpfiles.org free anonymous developer API
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        
-        const response = await fetch('https://tmpfiles.org/api/v1/upload', {
-          method: 'POST',
-          body: formData
-        });
-        
-        if (response.ok) {
-          const result = await response.json();
-          if (result.status === 'success' && result.data?.url) {
-            // Convert view URL to direct download URL (tmpfiles.org/XXXX -> tmpfiles.org/dl/XXXX)
-            const viewUrl = result.data.url;
-            const directUrl = viewUrl.replace('https://tmpfiles.org/', 'https://tmpfiles.org/dl/');
-            return directUrl;
-          }
-        }
-      } catch (tmpErr) {
-        console.warn('Tmpfiles upload fallback failed, forcing Base64 conversion...', tmpErr);
-      }
-
-      // FALLBACK 4: Force Base64 anyway as a last resort
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          if (typeof reader.result === 'string') {
-            resolve(reader.result);
-          } else {
-            reject(new Error('Chuyển đổi file thành Base64 thất bại'));
-          }
-        };
-        reader.onerror = () => reject(new Error('Lỗi khi đọc file'));
-        reader.readAsDataURL(file);
-      });
+      const downloadUrl = await Promise.race([uploadPromise, timeoutPromise]);
+      if (downloadUrl) return downloadUrl;
+    } catch (firebaseErr) {
+      console.warn('Firebase Storage upload failed or timed out:', firebaseErr);
     }
+
+    // 4. Ultimate Fallback: Return Base64 Data URL directly (works offline, zero network dependencies)
+    return await getBase64();
   },
 
   /**

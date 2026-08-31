@@ -540,6 +540,9 @@ export default function App() {
     { id: 'writing', label: '6. Writing' }
   ];
 
+  const DEFAULT_AUDIO_1 = 'https://storage.m3cdn.xyz/audio/1782652891560-hotel.mp3';
+  const DEFAULT_AUDIO_2 = 'https://storage.m3cdn.xyz/audio/section%201%20rented%20properties.mp3';
+
   // Renders the specific active section
   const renderActiveSection = () => {
     switch (currentSection) {
@@ -553,10 +556,11 @@ export default function App() {
             setCurrentQuestionId={setCurrentQuestionId}
             questionsPart1={listeningPart1}
             questionsPart2={listeningPart2}
-            audio1Url={activeExam?.audio1Url}
-            audio2Url={activeExam?.audio2Url}
-            examId={activeExam?.id}
+            audio1Url={activeExam?.audio1Url || DEFAULT_AUDIO_1}
+            audio2Url={activeExam?.audio2Url || DEFAULT_AUDIO_2}
+            examId={activeExam?.id || 'default'}
             candidateId={candidate?.id}
+            candidatePhone={candidate?.phone}
             candidateAudioPlayback={candidate?.audioPlayback}
             onAudioPlayed={(audioType) => {
               setCandidate((prev: any) => {

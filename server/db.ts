@@ -619,19 +619,22 @@ class DatabaseManager {
     return this.data.materials;
   }
 
-  public addMaterial(title: string, description: string, url: string, type: string): Material {
+  public addMaterial(title: string, description: string, url: string, type: string, extra?: { id?: string; fileName?: string; fileSize?: number; uploadedBy?: string }): Material {
     if (!this.data.materials) {
       this.data.materials = [];
     }
-    const newMaterial: Material = {
-      id: crypto.randomBytes(6).toString('hex'),
+    const newMaterial: any = {
+      id: extra?.id || crypto.randomBytes(6).toString('hex'),
       title: title.trim(),
       description: description.trim(),
       url: url.trim(),
       type: type,
+      fileName: extra?.fileName || '',
+      fileSize: extra?.fileSize || 0,
+      uploadedBy: extra?.uploadedBy || 'Admin',
       createdAt: new Date().toISOString()
     };
-    this.data.materials.push(newMaterial);
+    this.data.materials.unshift(newMaterial);
     this.save();
     return newMaterial;
   }

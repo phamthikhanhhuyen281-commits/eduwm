@@ -13,11 +13,6 @@ function getAiClient(): GoogleGenAI {
     }
     aiClient = new GoogleGenAI({
       apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
     });
   }
   return aiClient;
@@ -106,7 +101,7 @@ export async function evaluateSpeakingAudio(
     };
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
+      model: 'gemini-3.7-flash',
       contents: [audioPart, promptText],
       config: {
         responseMimeType: 'application/json',

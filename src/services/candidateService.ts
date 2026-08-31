@@ -887,6 +887,15 @@ export const candidateService = {
     }
   },
 
+  async updateCandidate(id: string, updates: Partial<Candidate>): Promise<void> {
+    try {
+      await updateDoc(doc(db, 'candidates', id), updates as any);
+    } catch (err) {
+      console.error('Error updating candidate:', err);
+      throw err;
+    }
+  },
+
   async deleteCandidate(id: string): Promise<void> {
     try {
       await deleteDoc(doc(db, 'candidates', id));

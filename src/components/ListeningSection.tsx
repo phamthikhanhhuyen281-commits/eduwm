@@ -15,6 +15,7 @@ interface ListeningSectionProps {
   audio2Url?: string;
   examId?: string;
   candidateId?: string;
+  candidatePhone?: string;
   candidateAudioPlayback?: {
     audio1Played?: boolean;
     audio1PlayedAt?: string;
@@ -36,17 +37,18 @@ export default function ListeningSection({
   audio2Url = '',
   examId = '',
   candidateId = '',
+  candidatePhone = '',
   candidateAudioPlayback,
   onAudioPlayed
 }: ListeningSectionProps) {
   const getAudio1Key = () => {
-    const cleanCandidate = candidateId || 'guest';
+    const cleanCandidate = candidatePhone?.trim() || candidateId || 'guest';
     const cleanExam = examId || 'default';
     return `audio_l1_played_${cleanCandidate}_${cleanExam}`;
   };
 
   const getAudio2Key = () => {
-    const cleanCandidate = candidateId || 'guest';
+    const cleanCandidate = candidatePhone?.trim() || candidateId || 'guest';
     const cleanExam = examId || 'default';
     return `audio_l2_played_${cleanCandidate}_${cleanExam}`;
   };
@@ -56,7 +58,12 @@ export default function ListeningSection({
     if (url.startsWith('/') || url.startsWith('blob:') || url.startsWith('data:')) {
       return url;
     }
-    return `/api/audio-proxy?url=${encodeURIComponent(url)}`;
+    // Google Drive requires server proxy to bypass auth/cors
+    if (url.includes('drive.google.com') || url.includes('docs.google.com')) {
+      return `/api/audio-proxy?url=${encodeURIComponent(url)}`;
+    }
+    // Direct audio URLs from storage/CDN work natively and faster
+    return url;
   };
 
   const formatSeconds = (sec: number) => {
@@ -210,18 +217,21 @@ export default function ListeningSection({
   useEffect(() => {
     const key1 = getAudio1Key();
     const key2 = getAudio2Key();
+
+    // Check if THIS specific candidate account has played this exam's audio
     const isL1Played = 
       candidateAudioPlayback?.audio1Played === true ||
-      localStorage.getItem(key1) === 'true';
+      (candidateAudioPlayback?.audio1Played !== false && localStorage.getItem(key1) === 'true');
     const isL2Played = 
       candidateAudioPlayback?.audio2Played === true ||
-      localStorage.getItem(key2) === 'true';
+      (candidateAudioPlayback?.audio2Played !== false && localStorage.getItem(key2) === 'true');
     
     if (isL1Played) {
       setAudio1State('ended');
       localStorage.setItem(key1, 'true');
     } else {
       setAudio1State('idle');
+      localStorage.removeItem(key1);
     }
 
     if (isL2Played) {
@@ -229,8 +239,9 @@ export default function ListeningSection({
       localStorage.setItem(key2, 'true');
     } else {
       setAudio2State('idle');
+      localStorage.removeItem(key2);
     }
-  }, [audio1Url, audio2Url, candidateId, examId, candidateAudioPlayback?.audio1Played, candidateAudioPlayback?.audio2Played]);
+  }, [audio1Url, audio2Url, candidateId, candidatePhone, examId, candidateAudioPlayback?.audio1Played, candidateAudioPlayback?.audio2Played]);
 
   // Cleanup audio elements on unmount to prevent playing in background
   useEffect(() => {
@@ -271,15 +282,20 @@ export default function ListeningSection({
     if (!audio1Ref.current) return;
 
     try {
-      // Set volume to 100% and un-mute
       audio1Ref.current.volume = 1;
       audio1Ref.current.muted = false;
 
-      const playPromise = audio1Ref.current.play();
-      if (playPromise !== undefined) {
-        await playPromise;
+      // Unlock Web Audio context on the user gesture
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        const audioCtx = new AudioContextClass();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
       }
-      // Lock permanently in localStorage and Firestore for this candidate account
+
+      await audio1Ref.current.play();
+
       localStorage.setItem(getAudio1Key(), 'true');
       setAudio1State('playing');
 
@@ -296,14 +312,14 @@ export default function ListeningSection({
         console.warn('Audio 1 playback interrupted (benign):', err.message);
       } else {
         console.error('Audio 1 playback failed:', err);
-        // If proxy failed, toggle fallback to direct URL
-        if (!audio1UsingFallback && audio1Url) {
+        if (!audio1UsingFallback) {
           setAudio1UsingFallback(true);
           setAudio1ErrorMsg('Đang chuyển đổi phương thức phát âm thanh dự phòng...');
-          setTimeout(() => {
+          setTimeout(async () => {
             if (audio1Ref.current) {
-              audio1Ref.current.load();
-              audio1Ref.current.play().then(() => {
+              try {
+                audio1Ref.current.load();
+                await audio1Ref.current.play();
                 localStorage.setItem(getAudio1Key(), 'true');
                 setAudio1State('playing');
                 setAudio1ErrorMsg(null);
@@ -313,10 +329,10 @@ export default function ListeningSection({
                     onAudioPlayed('audio1');
                   }
                 }
-              }).catch((e2) => {
-                setAudio1ErrorMsg('Không thể phát âm thanh: ' + (e2.message || 'Vui lòng kiểm tra quyền âm thanh của trình duyệt hoặc bấm Thử lại.'));
+              } catch (e2: any) {
+                setAudio1ErrorMsg('Không thể phát âm thanh: ' + (e2.message || 'Vui lòng kiểm tra quyền âm thanh trình duyệt và bấm Thử lại.'));
                 setAudio1State('idle');
-              });
+              }
             }
           }, 300);
         } else {
@@ -337,10 +353,17 @@ export default function ListeningSection({
       audio2Ref.current.volume = 1;
       audio2Ref.current.muted = false;
 
-      const playPromise = audio2Ref.current.play();
-      if (playPromise !== undefined) {
-        await playPromise;
+      // Unlock Web Audio context on user gesture
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        const audioCtx = new AudioContextClass();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
       }
+
+      await audio2Ref.current.play();
+
       localStorage.setItem(getAudio2Key(), 'true');
       setAudio2State('playing');
 
@@ -357,13 +380,14 @@ export default function ListeningSection({
         console.warn('Audio 2 playback interrupted (benign):', err.message);
       } else {
         console.error('Audio 2 playback failed:', err);
-        if (!audio2UsingFallback && audio2Url) {
+        if (!audio2UsingFallback) {
           setAudio2UsingFallback(true);
           setAudio2ErrorMsg('Đang chuyển đổi phương thức phát âm thanh dự phòng...');
-          setTimeout(() => {
+          setTimeout(async () => {
             if (audio2Ref.current) {
-              audio2Ref.current.load();
-              audio2Ref.current.play().then(() => {
+              try {
+                audio2Ref.current.load();
+                await audio2Ref.current.play();
                 localStorage.setItem(getAudio2Key(), 'true');
                 setAudio2State('playing');
                 setAudio2ErrorMsg(null);
@@ -373,10 +397,10 @@ export default function ListeningSection({
                     onAudioPlayed('audio2');
                   }
                 }
-              }).catch((e2) => {
+              } catch (e2: any) {
                 setAudio2ErrorMsg('Không thể phát âm thanh: ' + (e2.message || 'Vui lòng kiểm tra quyền âm thanh trình duyệt.'));
                 setAudio2State('idle');
-              });
+              }
             }
           }, 300);
         } else {
@@ -431,8 +455,12 @@ export default function ListeningSection({
     }
   };
 
-  const audio1ActualSrc = audio1UsingFallback ? audio1Url : getProxiedUrl(audio1Url);
-  const audio2ActualSrc = audio2UsingFallback ? audio2Url : getProxiedUrl(audio2Url);
+  const audio1ActualSrc = audio1UsingFallback
+    ? (audio1Url.includes('drive.google.com') ? audio1Url : `/api/audio-proxy?url=${encodeURIComponent(audio1Url)}`)
+    : getProxiedUrl(audio1Url);
+  const audio2ActualSrc = audio2UsingFallback
+    ? (audio2Url.includes('drive.google.com') ? audio2Url : `/api/audio-proxy?url=${encodeURIComponent(audio2Url)}`)
+    : getProxiedUrl(audio2Url);
 
   return (
     <div id="listening-section-wrapper" className="space-y-6">

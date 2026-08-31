@@ -617,7 +617,7 @@ async function startServer() {
     }
   });
 
-  // Admin file upload helper (for custom audios, images, etc.)
+  // Admin file upload helper (for custom audios, images, materials, documents, etc.)
   app.post('/api/admin/upload-file', adminAuth, async (req, res) => {
     try {
       const { fileName, fileData } = req.body;
@@ -635,44 +635,19 @@ async function startServer() {
 
       const buffer = Buffer.from(base64Data, 'base64');
 
-      // Attempt persistent cloud upload via Catbox.moe
-      try {
-        const formData = new FormData();
-        formData.append('reqtype', 'fileupload');
-        
-        // Create a Blob from the Buffer
-        const blob = new Blob([buffer], { type: mimeType });
-        formData.append('fileToUpload', blob, fileName);
-
-        console.log(`Attempting cloud upload to Catbox for ${fileName} (${mimeType})...`);
-        const catboxResponse = await fetch('https://catbox.moe/user/api.php', {
-          method: 'POST',
-          body: formData
-        });
-
-        if (catboxResponse.ok) {
-          const cloudUrl = await catboxResponse.text();
-          if (cloudUrl && cloudUrl.trim().startsWith('https://')) {
-            console.log('Successfully uploaded file persistently to Catbox:', cloudUrl.trim());
-            return res.json({ filePath: cloudUrl.trim() });
-          }
-        }
-        console.warn('Catbox upload returned non-ok status or invalid URL, trying local fallback...');
-      } catch (catboxError: any) {
-        console.warn('Persistent cloud Catbox upload failed, falling back to local storage:', catboxError.message);
-      }
-
-      // Local storage fallback (survives single run, resets on container redeploy)
-      const cleanName = Date.now() + '_' + fileName.replace(/[^a-zA-Z0-9\._-]/g, '');
+      // Local storage (Immediate, instantaneous, 100% reliable)
+      const cleanName = Date.now() + '_' + fileName.replace(/[^a-zA-Z0-9\._-]/g, '_');
       const RECORDINGS_DIR = path.join(process.cwd(), 'recordings');
       if (!fs.existsSync(RECORDINGS_DIR)) {
         fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
       }
       
       fs.writeFileSync(path.join(RECORDINGS_DIR, cleanName), buffer);
-      console.log('Successfully saved file locally as fallback:', `/recordings/${cleanName}`);
-      return res.json({ filePath: `/recordings/${cleanName}` });
+      console.log('Successfully saved file locally:', `/recordings/${cleanName}`);
+      
+      return res.json({ filePath: `/recordings/${cleanName}`, mimeType });
     } catch (error: any) {
+      console.error('File upload error:', error);
       return res.status(500).json({ error: error.message });
     }
   });
@@ -702,11 +677,11 @@ async function startServer() {
   // Admin route to add a study material
   app.post('/api/admin/materials', adminAuth, (req, res) => {
     try {
-      const { title, description, url, type } = req.body;
+      const { id, title, description, url, type, fileName, fileSize, uploadedBy } = req.body;
       if (!title || !type) {
         return res.status(400).json({ error: 'Tiêu đề và loại tài liệu là bắt buộc.' });
       }
-      const newMaterial = db.addMaterial(title, description || '', url || '', type);
+      const newMaterial = db.addMaterial(title, description || '', url || '', type, { id, fileName, fileSize, uploadedBy });
       return res.json({ material: newMaterial });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

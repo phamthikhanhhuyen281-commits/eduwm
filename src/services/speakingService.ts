@@ -76,11 +76,6 @@ export const speakingService = {
 
       const ai = new GoogleGenAI({
         apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
       });
 
       const audioPart = {
@@ -91,7 +86,7 @@ export const speakingService = {
       };
 
       const result = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.7-flash',
         contents: [audioPart, promptText],
         config: {
           responseMimeType: 'application/json',

@@ -35,11 +35,6 @@ export const aiScanService = {
 
     const ai = new GoogleGenAI({
       apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
     });
 
     const promptText = `
@@ -82,7 +77,7 @@ export const aiScanService = {
 
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.7-flash',
         contents: [filePart, promptText],
         config: {
           responseMimeType: 'application/json',

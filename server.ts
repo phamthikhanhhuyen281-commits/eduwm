@@ -675,6 +675,16 @@ async function startServer() {
     }
   });
 
+  // Public route to get study materials
+  app.get('/api/materials', (req, res) => {
+    try {
+      const materials = db.getMaterials();
+      return res.json({ materials });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
   // Admin route to add a study material
   app.post('/api/admin/materials', adminAuth, (req, res) => {
     try {
@@ -700,21 +710,21 @@ async function startServer() {
     }
   });
 
-  // Audio Proxy endpoint to stream audio files from external storage same-origin, avoiding CORS or referrer blocks
-  app.get('/api/audio-proxy', (req, res) => {
-    let audioUrl = req.query.url as string;
-    if (!audioUrl) {
+  // Proxy endpoint to stream any document, audio, video, pdf file from external storage same-origin, avoiding CORS or referrer blocks
+  const handleProxyStream = (req: express.Request, res: express.Response) => {
+    let fileUrl = req.query.url as string;
+    if (!fileUrl) {
       return res.status(400).send('Missing url parameter');
     }
 
     // Auto-convert Google Drive viewer/open links to direct download/stream links
-    const driveMatch = audioUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    const driveMatch = fileUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
     if (driveMatch && driveMatch[1]) {
-      audioUrl = `https://docs.google.com/uc?export=download&id=${driveMatch[1]}`;
+      fileUrl = `https://docs.google.com/uc?export=download&id=${driveMatch[1]}`;
     } else {
-      const openIdMatch = audioUrl.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+      const openIdMatch = fileUrl.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
       if (openIdMatch && openIdMatch[1]) {
-        audioUrl = `https://docs.google.com/uc?export=download&id=${openIdMatch[1]}`;
+        fileUrl = `https://docs.google.com/uc?export=download&id=${openIdMatch[1]}`;
       }
     }
 
@@ -767,16 +777,34 @@ async function startServer() {
             }
           });
 
+          // Deduce content-type from file extension if missing or generic octet-stream
+          const currentContentType = res.getHeader('content-type') as string || '';
+          if (!currentContentType || currentContentType.includes('octet-stream')) {
+            const urlPath = parsedUrl.pathname.toLowerCase();
+            if (urlPath.endsWith('.png')) res.setHeader('content-type', 'image/png');
+            else if (urlPath.endsWith('.jpg') || urlPath.endsWith('.jpeg')) res.setHeader('content-type', 'image/jpeg');
+            else if (urlPath.endsWith('.webp')) res.setHeader('content-type', 'image/webp');
+            else if (urlPath.endsWith('.gif')) res.setHeader('content-type', 'image/gif');
+            else if (urlPath.endsWith('.svg')) res.setHeader('content-type', 'image/svg+xml');
+            else if (urlPath.endsWith('.pdf')) res.setHeader('content-type', 'application/pdf');
+            else if (urlPath.endsWith('.mp3')) res.setHeader('content-type', 'audio/mpeg');
+            else if (urlPath.endsWith('.wav')) res.setHeader('content-type', 'audio/wav');
+            else if (urlPath.endsWith('.mp4')) res.setHeader('content-type', 'video/mp4');
+            else if (urlPath.endsWith('.docx')) res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+          }
+
           // Add CORS / security headers
           res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
           proxyRes.pipe(res);
         });
 
         proxyReq.on('error', (err) => {
-          console.error('Audio proxy request error:', err);
+          console.error('File proxy request error:', err);
           if (!res.headersSent) {
-            res.status(500).send('Error fetching audio resource');
+            res.status(500).send('Error fetching resource');
           }
         });
 
@@ -791,11 +819,23 @@ async function startServer() {
       }
     };
 
-    streamUrlWithRedirects(audioUrl);
-  });
+    streamUrlWithRedirects(fileUrl);
+  };
 
-  // Static serving for recorded audio files
-  app.use('/recordings', express.static(path.join(process.cwd(), 'recordings')));
+  app.get('/api/audio-proxy', handleProxyStream);
+  app.get('/api/file-proxy', handleProxyStream);
+
+  // Static serving for recorded audio and uploaded documents
+  app.use(
+    '/recordings',
+    (req, res, next) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      next();
+    },
+    express.static(path.join(process.cwd(), 'recordings'))
+  );
 
   // Vite Integration & SPA asset serving
   if (process.env.NODE_ENV !== 'production') {

@@ -137,3 +137,23 @@ html.dark body {
   padding-bottom: 0.5rem;
   border-radius: 0 8px 8px 0;
 }
+
+/* docx-preview wrapper styling */
+.docx-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+.docx-wrapper > section.docx {
+  background: white !important;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08) !important;
+  margin-bottom: 2rem !important;
+  border-radius: 1rem !important;
+  border: 1px solid #e2e8f0 !important;
+  padding: 2.5rem 3rem !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+

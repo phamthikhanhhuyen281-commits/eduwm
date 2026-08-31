@@ -1674,13 +1674,16 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     };
 
     const getMaterialTypeBadge = (mat: any) => {
-      const urlLower = (mat.url || '').toLowerCase();
-      if (mat.type === 'pdf' || urlLower.endsWith('.pdf')) return { text: 'Tài liệu PDF', bg: 'bg-red-50 text-red-700 border-red-200' };
-      if (mat.type === 'docx' || urlLower.endsWith('.docx') || urlLower.endsWith('.doc')) return { text: 'File Word (.docx)', bg: 'bg-blue-50 text-blue-700 border-blue-200' };
-      if (mat.type === 'video' || urlLower.includes('youtu') || urlLower.endsWith('.mp4')) return { text: 'Video bài giảng', bg: 'bg-purple-50 text-purple-700 border-purple-200' };
-      if (mat.type === 'audio' || urlLower.endsWith('.mp3') || urlLower.endsWith('.wav')) return { text: 'Audio bài nghe', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-      if (mat.type === 'image' || urlLower.endsWith('.png') || urlLower.endsWith('.jpg')) return { text: 'Hình ảnh bài học', bg: 'bg-amber-50 text-amber-700 border-amber-200' };
-      if (mat.type === 'link') return { text: 'Liên kết ngoài', bg: 'bg-cyan-50 text-cyan-700 border-cyan-200' };
+      const cleanUrl = (mat.url || '').split('?')[0].split('#')[0].toLowerCase();
+      const type = (mat.type || '').toLowerCase();
+      const fileName = (mat.fileName || '').toLowerCase();
+
+      if (type === 'pdf' || cleanUrl.endsWith('.pdf') || fileName.endsWith('.pdf')) return { text: 'Tài liệu PDF', bg: 'bg-red-50 text-red-700 border-red-200' };
+      if (type === 'docx' || type === 'doc' || cleanUrl.endsWith('.docx') || cleanUrl.endsWith('.doc') || fileName.endsWith('.docx')) return { text: 'File Word (.docx)', bg: 'bg-blue-50 text-blue-700 border-blue-200' };
+      if (type === 'video' || mat.url.toLowerCase().includes('youtu') || cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.webm')) return { text: 'Video bài giảng', bg: 'bg-purple-50 text-purple-700 border-purple-200' };
+      if (type === 'audio' || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.wav') || cleanUrl.endsWith('.m4a')) return { text: 'Audio bài nghe', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+      if (type === 'image' || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.svg') || fileName.endsWith('.png') || fileName.endsWith('.jpg')) return { text: 'Hình ảnh bài học', bg: 'bg-amber-50 text-amber-700 border-amber-200' };
+      if (type === 'link') return { text: 'Liên kết ngoài', bg: 'bg-cyan-50 text-cyan-700 border-cyan-200' };
       return { text: 'Tài liệu học tập', bg: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
     };
 
@@ -1693,23 +1696,30 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
       if (!matchSearch) return false;
       if (materialFilterType === 'all') return true;
-      if (materialFilterType === 'pdf') return m.type === 'pdf' || m.url.toLowerCase().includes('.pdf');
-      if (materialFilterType === 'docx') return m.type === 'docx' || m.url.toLowerCase().includes('.doc') || m.url.toLowerCase().includes('.docx');
-      if (materialFilterType === 'video') return m.type === 'video' || m.url.toLowerCase().includes('youtu') || m.url.toLowerCase().includes('.mp4');
-      if (materialFilterType === 'audio') return m.type === 'audio' || m.url.toLowerCase().includes('.mp3') || m.url.toLowerCase().includes('.wav');
-      if (materialFilterType === 'image') return m.type === 'image' || m.url.toLowerCase().includes('.png') || m.url.toLowerCase().includes('.jpg');
-      if (materialFilterType === 'link') return m.type === 'link';
+
+      const cleanUrl = (m.url || '').split('?')[0].split('#')[0].toLowerCase();
+      const type = (m.type || '').toLowerCase();
+      const fileName = (m.fileName || '').toLowerCase();
+
+      if (materialFilterType === 'pdf') return type === 'pdf' || cleanUrl.endsWith('.pdf') || fileName.endsWith('.pdf');
+      if (materialFilterType === 'docx') return type === 'docx' || type === 'doc' || cleanUrl.endsWith('.doc') || cleanUrl.endsWith('.docx') || fileName.endsWith('.docx');
+      if (materialFilterType === 'video') return type === 'video' || m.url.toLowerCase().includes('youtu') || cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.webm') || cleanUrl.endsWith('.mov');
+      if (materialFilterType === 'audio') return type === 'audio' || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.wav') || cleanUrl.endsWith('.m4a') || cleanUrl.endsWith('.ogg');
+      if (materialFilterType === 'image') return type === 'image' || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.svg') || fileName.endsWith('.png') || fileName.endsWith('.jpg');
+      if (materialFilterType === 'link') return type === 'link';
       return true;
     });
 
     const getIconForType = (type: string, url: string) => {
-      const u = (url || '').toLowerCase();
-      if (type === 'pdf' || u.endsWith('.pdf')) return <FileText className="w-5 h-5 text-red-600" />;
-      if (type === 'docx' || u.endsWith('.docx') || u.endsWith('.doc')) return <FileCode className="w-5 h-5 text-blue-600" />;
-      if (type === 'video' || u.includes('youtu') || u.endsWith('.mp4')) return <Video className="w-5 h-5 text-purple-600" />;
-      if (type === 'audio' || u.endsWith('.mp3') || u.endsWith('.wav')) return <Headphones className="w-5 h-5 text-emerald-600" />;
-      if (type === 'image' || u.endsWith('.png') || u.endsWith('.jpg')) return <ImageIcon className="w-5 h-5 text-amber-600" />;
-      if (type === 'link') return <ExternalLink className="w-5 h-5 text-cyan-600" />;
+      const cleanUrl = (url || '').split('?')[0].split('#')[0].toLowerCase();
+      const t = (type || '').toLowerCase();
+
+      if (t === 'pdf' || cleanUrl.endsWith('.pdf')) return <FileText className="w-5 h-5 text-red-600" />;
+      if (t === 'docx' || t === 'doc' || cleanUrl.endsWith('.docx') || cleanUrl.endsWith('.doc')) return <FileCode className="w-5 h-5 text-blue-600" />;
+      if (t === 'video' || (url || '').toLowerCase().includes('youtu') || cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.webm')) return <Video className="w-5 h-5 text-purple-600" />;
+      if (t === 'audio' || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.wav') || cleanUrl.endsWith('.m4a')) return <Headphones className="w-5 h-5 text-emerald-600" />;
+      if (t === 'image' || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.svg')) return <ImageIcon className="w-5 h-5 text-amber-600" />;
+      if (t === 'link') return <ExternalLink className="w-5 h-5 text-cyan-600" />;
       return <BookOpen className="w-5 h-5 text-indigo-600" />;
     };
 
@@ -3790,7 +3800,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                               <p className="text-xs text-slate-800 leading-relaxed font-serif">"{readAloudText}"</p>
                             </div>
 
-                            {selectedCandidate.answers?.speakingPart1?.audioPath ? (
+                            {selectedCandidate.answers?.speakingPart1?.audioPath && selectedCandidate.answers.speakingPart1.audioPath.trim() !== '' ? (
                               <div className="space-y-3">
                                 <audio src={selectedCandidate.answers.speakingPart1.audioPath} controls className="w-full h-9 rounded-lg" preload="metadata" />
                                 <a
@@ -3827,7 +3837,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                                       <p className="text-xs font-bold text-slate-800 leading-snug my-1 italic shrink-0">"{qText}"</p>
                                     </div>
                                     <div className="pt-2">
-                                      {audioPath ? (
+                                      {audioPath && typeof audioPath === 'string' && audioPath.trim() !== '' ? (
                                         <audio src={audioPath} controls className="w-full h-8" preload="metadata" />
                                       ) : (
                                         <span className="text-[10px] text-slate-400 italic block">Không có ghi âm</span>

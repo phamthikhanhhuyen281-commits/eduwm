@@ -123,12 +123,17 @@ export default function StudentPortal({
     
     if (!matchesSearch) return false;
     if (selectedCategory === 'all') return true;
-    if (selectedCategory === 'pdf') return m.type === 'pdf' || m.url.toLowerCase().includes('.pdf');
-    if (selectedCategory === 'docx') return m.type === 'docx' || m.url.toLowerCase().includes('.doc') || m.url.toLowerCase().includes('.docx');
-    if (selectedCategory === 'video') return m.type === 'video' || m.url.toLowerCase().includes('youtu') || m.url.toLowerCase().includes('.mp4');
-    if (selectedCategory === 'audio') return m.type === 'audio' || m.url.toLowerCase().includes('.mp3') || m.url.toLowerCase().includes('.wav') || m.url.toLowerCase().includes('.m4a');
-    if (selectedCategory === 'image') return m.type === 'image' || m.url.toLowerCase().includes('.png') || m.url.toLowerCase().includes('.jpg') || m.url.toLowerCase().includes('.jpeg');
-    if (selectedCategory === 'link') return m.type === 'link';
+    
+    const cleanUrl = (m.url || '').split('?')[0].split('#')[0].toLowerCase();
+    const type = (m.type || '').toLowerCase();
+    const fileName = (m.fileName || '').toLowerCase();
+
+    if (selectedCategory === 'pdf') return type === 'pdf' || cleanUrl.endsWith('.pdf') || fileName.endsWith('.pdf');
+    if (selectedCategory === 'docx') return type === 'docx' || type === 'doc' || cleanUrl.endsWith('.doc') || cleanUrl.endsWith('.docx') || fileName.endsWith('.docx');
+    if (selectedCategory === 'video') return type === 'video' || m.url.toLowerCase().includes('youtu') || cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.webm') || cleanUrl.endsWith('.mov');
+    if (selectedCategory === 'audio') return type === 'audio' || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.wav') || cleanUrl.endsWith('.m4a') || cleanUrl.endsWith('.ogg');
+    if (selectedCategory === 'image') return type === 'image' || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.gif') || cleanUrl.endsWith('.svg') || fileName.endsWith('.png') || fileName.endsWith('.jpg');
+    if (selectedCategory === 'link') return type === 'link';
     return true;
   });
 
@@ -141,41 +146,33 @@ export default function StudentPortal({
 
   const handleOpenPreview = (mat: Material) => {
     setPreviewMaterial(mat);
-    const urlLower = (mat.url || '').toLowerCase();
-    if (mat.type === 'video' || urlLower.includes('youtube.com') || urlLower.includes('youtu.be') || urlLower.endsWith('.mp4') || urlLower.endsWith('.webm')) {
-      setPreviewType('video');
-    } else if (mat.type === 'audio' || urlLower.endsWith('.mp3') || urlLower.endsWith('.wav') || urlLower.endsWith('.m4a') || urlLower.endsWith('.ogg')) {
-      setPreviewType('audio');
-    } else if (mat.type === 'image' || urlLower.endsWith('.png') || urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg') || urlLower.endsWith('.webp')) {
-      setPreviewType('image');
-    } else if (mat.type === 'pdf' || urlLower.endsWith('.pdf')) {
-      setPreviewType('pdf');
-    } else if (mat.type === 'docx' || urlLower.endsWith('.docx') || urlLower.endsWith('.doc')) {
-      setPreviewType('word');
-    } else {
-      setPreviewType('link');
-    }
   };
 
   const getMaterialIcon = (mat: Material) => {
-    const urlLower = mat.url?.toLowerCase() || '';
-    if (mat.type === 'pdf' || urlLower.endsWith('.pdf')) return <FileText className="w-5 h-5 text-red-500 dark:text-red-400" />;
-    if (mat.type === 'docx' || urlLower.endsWith('.docx') || urlLower.endsWith('.doc')) return <FileCode className="w-5 h-5 text-blue-500 dark:text-blue-400" />;
-    if (mat.type === 'video' || urlLower.includes('youtu') || urlLower.endsWith('.mp4')) return <Video className="w-5 h-5 text-purple-500 dark:text-purple-400" />;
-    if (mat.type === 'audio' || urlLower.endsWith('.mp3') || urlLower.endsWith('.wav')) return <Headphones className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />;
-    if (mat.type === 'image' || urlLower.endsWith('.png') || urlLower.endsWith('.jpg')) return <ImageIcon className="w-5 h-5 text-amber-500 dark:text-amber-400" />;
-    if (mat.type === 'link') return <ExternalLink className="w-5 h-5 text-cyan-500 dark:text-cyan-400" />;
+    const cleanUrl = (mat.url || '').split('?')[0].split('#')[0].toLowerCase();
+    const type = (mat.type || '').toLowerCase();
+    const fileName = (mat.fileName || '').toLowerCase();
+
+    if (type === 'pdf' || cleanUrl.endsWith('.pdf') || fileName.endsWith('.pdf')) return <FileText className="w-5 h-5 text-red-500 dark:text-red-400" />;
+    if (type === 'docx' || type === 'doc' || cleanUrl.endsWith('.docx') || cleanUrl.endsWith('.doc') || fileName.endsWith('.docx')) return <FileCode className="w-5 h-5 text-blue-500 dark:text-blue-400" />;
+    if (type === 'video' || mat.url.toLowerCase().includes('youtu') || cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.webm')) return <Video className="w-5 h-5 text-purple-500 dark:text-purple-400" />;
+    if (type === 'audio' || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.wav') || cleanUrl.endsWith('.m4a')) return <Headphones className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />;
+    if (type === 'image' || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.svg') || fileName.endsWith('.png') || fileName.endsWith('.jpg')) return <ImageIcon className="w-5 h-5 text-amber-500 dark:text-amber-400" />;
+    if (type === 'link') return <ExternalLink className="w-5 h-5 text-cyan-500 dark:text-cyan-400" />;
     return <BookOpen className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />;
   };
 
   const getMaterialTypeBadge = (mat: Material) => {
-    const urlLower = mat.url?.toLowerCase() || '';
-    if (mat.type === 'pdf' || urlLower.endsWith('.pdf')) return { text: 'Tài liệu PDF', bg: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800' };
-    if (mat.type === 'docx' || urlLower.endsWith('.docx') || urlLower.endsWith('.doc')) return { text: 'File Word', bg: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800' };
-    if (mat.type === 'video' || urlLower.includes('youtu') || urlLower.endsWith('.mp4')) return { text: 'Video bài giảng', bg: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800' };
-    if (mat.type === 'audio' || urlLower.endsWith('.mp3') || urlLower.endsWith('.wav')) return { text: 'Audio bài nghe', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800' };
-    if (mat.type === 'image' || urlLower.endsWith('.png') || urlLower.endsWith('.jpg')) return { text: 'Hình ảnh', bg: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800' };
-    if (mat.type === 'link') return { text: 'Liên kết ngoài', bg: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800' };
+    const cleanUrl = (mat.url || '').split('?')[0].split('#')[0].toLowerCase();
+    const type = (mat.type || '').toLowerCase();
+    const fileName = (mat.fileName || '').toLowerCase();
+
+    if (type === 'pdf' || cleanUrl.endsWith('.pdf') || fileName.endsWith('.pdf')) return { text: 'Tài liệu PDF', bg: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800' };
+    if (type === 'docx' || type === 'doc' || cleanUrl.endsWith('.docx') || cleanUrl.endsWith('.doc') || fileName.endsWith('.docx')) return { text: 'File Word', bg: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800' };
+    if (type === 'video' || mat.url.toLowerCase().includes('youtu') || cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.webm')) return { text: 'Video bài giảng', bg: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800' };
+    if (type === 'audio' || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.wav') || cleanUrl.endsWith('.m4a')) return { text: 'Audio bài nghe', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800' };
+    if (type === 'image' || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.svg') || fileName.endsWith('.png') || fileName.endsWith('.jpg')) return { text: 'Hình ảnh', bg: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800' };
+    if (type === 'link') return { text: 'Liên kết ngoài', bg: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800' };
     return { text: 'Tài liệu học tập', bg: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800' };
   };
 
@@ -685,7 +682,7 @@ export default function StudentPortal({
                         </button>
 
                         {/* Direct Download button if file */}
-                        {(mat.url.startsWith('http') || mat.url.startsWith('data:')) && (
+                        {mat.url && (
                           <a
                             href={mat.url}
                             download={mat.fileName || mat.title}

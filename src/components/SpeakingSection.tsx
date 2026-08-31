@@ -379,11 +379,11 @@ export default function SpeakingSection({
           </div>
 
           {/* Audio Player Preview for Part 1 */}
-          {(audioUrls['speaking_p1'] || answers['speaking_p1']) && (
+          {Boolean((audioUrls['speaking_p1'] && audioUrls['speaking_p1'].trim() !== '') || (answers['speaking_p1'] && answers['speaking_p1'].trim() !== '')) && (
             <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
               <span className="text-xs font-bold text-slate-700 block">Nghe lại bản ghi âm của bạn:</span>
               <audio
-                src={audioUrls['speaking_p1'] || answers['speaking_p1']}
+                src={(audioUrls['speaking_p1'] || answers['speaking_p1']) || undefined}
                 controls
                 className="w-full h-8 rounded-lg"
                 preload="metadata"
@@ -478,8 +478,8 @@ export default function SpeakingSection({
                         <span className="flex items-center justify-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 rounded-lg text-xs font-bold">
                           <Check className="w-3.5 h-3.5" /> Đã lưu bài nói ✓
                         </span>
-                        {(audioUrls[id] || answers[id]) && (
-                          <audio src={audioUrls[id] || answers[id]} controls className="w-full h-7" preload="metadata" />
+                        {Boolean((audioUrls[id] && audioUrls[id].trim() !== '') || (answers[id] && answers[id].trim() !== '')) && (
+                          <audio src={(audioUrls[id] || answers[id]) || undefined} controls className="w-full h-7" preload="metadata" />
                         )}
                       </div>
                     )}

@@ -784,7 +784,7 @@ export const ManualExamBuilder: React.FC<ManualExamBuilderProps> = ({
               onChange={(e) => setAudio1Url(e.target.value)}
               className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono bg-white"
             />
-            {audio1Url && (
+            {audio1Url && audio1Url.trim() !== '' && (
               <audio
                 src={audio1Url.startsWith('data:') || audio1Url.startsWith('blob:') ? audio1Url : `/api/audio-proxy?url=${encodeURIComponent(audio1Url)}`}
                 controls
@@ -834,7 +834,7 @@ export const ManualExamBuilder: React.FC<ManualExamBuilderProps> = ({
               onChange={(e) => setAudio2Url(e.target.value)}
               className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono bg-white"
             />
-            {audio2Url && (
+            {audio2Url && audio2Url.trim() !== '' && (
               <audio
                 src={audio2Url.startsWith('data:') || audio2Url.startsWith('blob:') ? audio2Url : `/api/audio-proxy?url=${encodeURIComponent(audio2Url)}`}
                 controls
@@ -1120,7 +1120,7 @@ export const ManualExamBuilder: React.FC<ManualExamBuilderProps> = ({
                     onChange={(e) => setFImageUrl(e.target.value)}
                     className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white font-mono"
                   />
-                  {fImageUrl && (
+                  {fImageUrl && fImageUrl.trim() !== '' && (
                     <div className="mt-1 flex items-center gap-2">
                       <img src={fImageUrl} alt="Preview" className="h-10 w-14 object-cover rounded-lg border" />
                       <button

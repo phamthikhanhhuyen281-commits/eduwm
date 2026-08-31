@@ -550,7 +550,7 @@ export default function ListeningSection({
 
                     <audio
                       ref={audio1Ref}
-                      src={audio1ActualSrc}
+                      src={audio1ActualSrc || undefined}
                       onTimeUpdate={handleAudio1TimeUpdate}
                       onEnded={handleAudio1Ended}
                       onLoadedMetadata={handleAudio1TimeUpdate}
@@ -649,7 +649,7 @@ export default function ListeningSection({
                         </h4>
                       </div>
 
-                      {q.imageUrl && (
+                      {q.imageUrl && q.imageUrl.trim() !== '' && (
                         <div className="mb-4 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 max-w-md shadow-xs">
                           <img
                             src={q.imageUrl}
@@ -660,10 +660,10 @@ export default function ListeningSection({
                         </div>
                       )}
 
-                      {q.audioUrl && (
+                      {q.audioUrl && q.audioUrl.trim() !== '' && (
                         <div className="mb-4 p-3 rounded-xl border border-indigo-100 bg-indigo-50/20 max-w-md flex items-center gap-3 shadow-xs">
                           <audio
-                            src={getProxiedUrl(q.audioUrl)}
+                            src={getProxiedUrl(q.audioUrl) || undefined}
                             controls
                             className="w-full h-8"
                             preload="auto"
@@ -779,7 +779,7 @@ export default function ListeningSection({
 
                     <audio
                       ref={audio2Ref}
-                      src={audio2ActualSrc}
+                      src={audio2ActualSrc || undefined}
                       onTimeUpdate={handleAudio2TimeUpdate}
                       onEnded={handleAudio2Ended}
                       onLoadedMetadata={handleAudio2TimeUpdate}

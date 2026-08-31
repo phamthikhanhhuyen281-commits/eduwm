@@ -60,22 +60,32 @@ function checkAnswer(userAnswer: string, correctAnswer: string): boolean {
 }
 
 export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
-  const answers = candidate.answers;
+  const answers = candidate.answers || {
+    listeningPart1: {},
+    listeningPart2: {},
+    grammar: {},
+    vocabulary: {},
+    readingPartA: {},
+    readingPartB: {},
+    writing: {}
+  };
+  const isDefaultExam = !candidate.examId || candidate.examId === 'default-exam';
   const exam = db.getExamById(candidate.examId || 'default-exam');
 
-  const listeningPart1 = exam?.questions?.listeningPart1 || LISTENING_PART_1;
-  const listeningPart2 = exam?.questions?.listeningPart2 || LISTENING_PART_2;
-  const grammarQuestions = exam?.questions?.grammar || GRAMMAR_QUESTIONS;
-  const vocabularyQuestions = exam?.questions?.vocabulary || VOCABULARY_QUESTIONS;
-  const readingPartA = exam?.questions?.readingPassage?.questionsPartA || READING_PASSAGE.questionsPartA;
-  const readingPartB = exam?.questions?.readingPassage?.questionsPartB || READING_PASSAGE.questionsPartB;
+  const listeningPart1 = exam?.questions?.listeningPart1 || (isDefaultExam ? LISTENING_PART_1 : []);
+  const listeningPart2 = exam?.questions?.listeningPart2 || (isDefaultExam ? LISTENING_PART_2 : []);
+  const grammarQuestions = exam?.questions?.grammar || (isDefaultExam ? GRAMMAR_QUESTIONS : []);
+  const vocabularyQuestions = exam?.questions?.vocabulary || (isDefaultExam ? VOCABULARY_QUESTIONS : []);
+  const readingPartA = exam?.questions?.readingPassage?.questionsPartA || (isDefaultExam ? READING_PASSAGE.questionsPartA : []);
+  const readingPartB = exam?.questions?.readingPassage?.questionsPartB || (isDefaultExam ? READING_PASSAGE.questionsPartB : []);
+  const writingQuestions = exam?.questions?.writingQuestions || (isDefaultExam ? [1] : []);
 
   // 1. Grade Listening
   let listeningScore = 0;
   
   // Part 1 MCQs
   listeningPart1.forEach((q: any) => {
-    const userAnswer = answers.listeningPart1[q.id];
+    const userAnswer = answers.listeningPart1?.[q.id];
     if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
       listeningScore += 1;
     }
@@ -83,7 +93,7 @@ export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
 
   // Part 2 Blanks
   listeningPart2.forEach((q: any) => {
-    const userAnswer = answers.listeningPart2[q.id];
+    const userAnswer = answers.listeningPart2?.[q.id];
     if (userAnswer && checkAnswer(userAnswer, q.answer)) {
       listeningScore += 1;
     }
@@ -92,7 +102,7 @@ export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
   // 2. Grade Grammar
   let grammarScore = 0;
   grammarQuestions.forEach((q: any) => {
-    const userAnswer = answers.grammar[q.id];
+    const userAnswer = answers.grammar?.[q.id];
     if (userAnswer) {
       if (q.type === 'mcq') {
         if (userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
@@ -109,7 +119,7 @@ export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
   // 3. Grade Vocabulary
   let vocabularyScore = 0;
   vocabularyQuestions.forEach((q: any) => {
-    const userAnswer = answers.vocabulary[q.id];
+    const userAnswer = answers.vocabulary?.[q.id];
     if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
       vocabularyScore += 1;
     }
@@ -119,14 +129,14 @@ export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
   let readingScore = 0;
   // Part A
   readingPartA.forEach((q: any) => {
-    const userAnswer = answers.readingPartA[q.id];
+    const userAnswer = answers.readingPartA?.[q.id];
     if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
       readingScore += 1;
     }
   });
   // Part B
   readingPartB.forEach((q: any) => {
-    const userAnswer = answers.readingPartB[q.id];
+    const userAnswer = answers.readingPartB?.[q.id];
     if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
       readingScore += 1;
     }
@@ -134,6 +144,7 @@ export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
 
   // Writing score (manually graded, defaults to candidate.writingScore)
   const writingScore = candidate.writingScore || 0;
+  const writingMax = (writingQuestions.length > 0 || isDefaultExam) ? 10 : 0;
 
   const totalAuto = listeningScore + grammarScore + vocabularyScore + readingScore;
   const total = totalAuto + writingScore;
@@ -144,7 +155,7 @@ export function autoGradeCandidate(candidate: Candidate): Candidate['scores'] {
     vocabularyQuestions.length + 
     readingPartA.length + 
     readingPartB.length + 
-    10; // 10 points maximum for Writing
+    writingMax;
 
   const percentage = maxPossible > 0 ? Math.round((total / maxPossible) * 100) : 0;
 

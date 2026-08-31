@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, sanitizeForFirestore } from '../firebase';
 
 export interface AppSettings {
   logoUrl?: string;
@@ -94,7 +94,7 @@ export const settingsService = {
       const docRef = doc(db, 'settings', 'global');
       const current = await this.getSettings();
       const updated = { ...current, ...updates };
-      await setDoc(docRef, updated);
+      await setDoc(docRef, sanitizeForFirestore(updated));
       try {
         localStorage.setItem('app_settings_cache', JSON.stringify(updated));
       } catch (e) {}

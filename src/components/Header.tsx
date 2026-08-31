@@ -11,6 +11,7 @@ interface HeaderProps {
   onSectionSelect: (sectionName: string) => void;
   sectionsList: { id: string; label: string }[];
   onBackToPortal?: () => void;
+  onExitRoom?: () => void;
 }
 
 export default function Header({
@@ -20,7 +21,8 @@ export default function Header({
   currentSection,
   onSectionSelect,
   sectionsList,
-  onBackToPortal
+  onBackToPortal,
+  onExitRoom
 }: HeaderProps) {
   const [lang, setLang] = useState<Language>(languageService.getLanguage());
 
@@ -120,6 +122,17 @@ export default function Header({
               >
                 <BookOpen className="w-3.5 h-3.5 text-indigo-300" />
                 <span className="hidden md:inline">Trang chủ & Tài liệu</span>
+              </button>
+            )}
+
+            {onExitRoom && (
+              <button
+                type="button"
+                onClick={onExitRoom}
+                className="px-3 py-1.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-100 border border-rose-400/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                title="Rời phòng thi"
+              >
+                <span>{t('exit_room')}</span>
               </button>
             )}
 

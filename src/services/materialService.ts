@@ -1,5 +1,5 @@
 import { collection, doc, getDocs, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, sanitizeForFirestore } from '../firebase';
 
 export interface Material {
   id: string;
@@ -89,7 +89,7 @@ export const materialService = {
     // 2. Save to Firestore
     try {
       const docRef = doc(db, 'materials', material.id);
-      await setDoc(docRef, material);
+      await setDoc(docRef, sanitizeForFirestore(material));
       firestoreSuccess = true;
     } catch (err) {
       console.warn('Firestore material save failed, syncing to backend server fallback...', err);

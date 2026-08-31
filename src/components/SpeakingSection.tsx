@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Check, RefreshCw, AlertCircle, Play, Sparkles, Volume2 } from 'lucide-react';
-import { SPEAKING_READ_ALOUD, SPEAKING_QUESTIONS } from '../questions';
 import { candidateService } from '../services/candidateService';
 import { storageService } from '../services/storageService';
 import { speakingService } from '../services/speakingService';
@@ -19,8 +18,8 @@ export default function SpeakingSection({
   answers,
   onAnswerChange,
   onRefreshSession,
-  speakingQuestions = SPEAKING_QUESTIONS,
-  speakingReadAloud = SPEAKING_READ_ALOUD
+  speakingQuestions = [],
+  speakingReadAloud = { text: '', wordCount: 0 }
 }: SpeakingSectionProps) {
   const [permission, setPermission] = useState<boolean | null>(null);
   const [recordingState, setRecordingState] = useState<Record<string, 'idle' | 'recording' | 'saving' | 'done'>>({});
@@ -308,185 +307,189 @@ export default function SpeakingSection({
       )}
 
       {/* PART 1: READ ALOUD */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-indigo-900" />
-            <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">SPEAKING BÀI 1: ĐỌC THÀNH TIẾNG ĐOẠN VĂN (B1)</h3>
+      {speakingReadAloud && speakingReadAloud.text && speakingReadAloud.text.trim().length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-indigo-900" />
+              <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">SPEAKING BÀI 1: ĐỌC THÀNH TIẾNG ĐOẠN VĂN</h3>
+            </div>
+            <span className="text-xs font-mono font-bold bg-indigo-50 text-indigo-900 px-2.5 py-1 rounded-md">
+              Chỉ được ghi âm 1 lần
+            </span>
           </div>
-          <span className="text-xs font-mono font-bold bg-indigo-50 text-indigo-900 px-2.5 py-1 rounded-md">
-            Chỉ được ghi âm 1 lần
-          </span>
-        </div>
 
-        <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide">
-          Đọc to và rõ ràng đoạn văn dưới đây vào microphone. Bạn chỉ có thể ghi âm <strong className="text-red-600 underline">1 lần duy nhất</strong> và không được sửa đổi hay ghi lại:
-        </p>
+          <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide">
+            Đọc to và rõ ràng đoạn văn dưới đây vào microphone. Bạn chỉ có thể ghi âm <strong className="text-red-600 underline">1 lần duy nhất</strong> và không được sửa đổi hay ghi lại:
+          </p>
 
-        {/* Reading Text Container */}
-        <div className="bg-slate-50 border border-slate-150 p-6 md:p-8 rounded-2xl font-serif text-base md:text-lg leading-relaxed text-slate-800 select-none shadow-inner text-justify">
-          "{speakingReadAloud.text}"
-        </div>
+          {/* Reading Text Container */}
+          <div className="bg-slate-50 border border-slate-150 p-6 md:p-8 rounded-2xl font-serif text-base md:text-lg leading-relaxed text-slate-800 select-none shadow-inner text-justify">
+            "{speakingReadAloud.text}"
+          </div>
 
-        {/* Recording Controls */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
-          <div className="flex items-center gap-3">
-            {recordingState['speaking_p1'] === 'recording' ? (
-              <button
-                onClick={() => stopRecording('speaking_p1')}
-                className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
-              >
-                <Square className="w-4 h-4 fill-current" /> Stop (Dừng & Lưu)
-              </button>
-            ) : (
-              <button
-                onClick={() => startRecording('speaking_p1')}
-                disabled={recordingState['speaking_p1'] === 'saving' || recordingState['speaking_p1'] === 'done'}
-                className="bg-indigo-900 hover:bg-indigo-850 text-white font-bold py-3 px-6 rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
-              >
-                <Mic className="w-4 h-4" /> 
-                {recordingState['speaking_p1'] === 'done' ? 'Locked (Đã khóa ghi âm)' : 'Start Recording (Bắt đầu nói)'}
-              </button>
-            )}
+          {/* Recording Controls */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+            <div className="flex items-center gap-3">
+              {recordingState['speaking_p1'] === 'recording' ? (
+                <button
+                  onClick={() => stopRecording('speaking_p1')}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+                >
+                  <Square className="w-4 h-4 fill-current" /> Stop (Dừng & Lưu)
+                </button>
+              ) : (
+                <button
+                  onClick={() => startRecording('speaking_p1')}
+                  disabled={recordingState['speaking_p1'] === 'saving' || recordingState['speaking_p1'] === 'done'}
+                  className="bg-indigo-900 hover:bg-indigo-850 text-white font-bold py-3 px-6 rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
+                >
+                  <Mic className="w-4 h-4" /> 
+                  {recordingState['speaking_p1'] === 'done' ? 'Locked (Đã khóa ghi âm)' : 'Start Recording (Bắt đầu nói)'}
+                </button>
+              )}
 
-            {/* Timer or Status indicators */}
-            {recordingState['speaking_p1'] === 'recording' && (
-              <div className="flex items-center gap-2 text-red-600 font-mono font-bold animate-pulse">
-                <span className="w-2.5 h-2.5 bg-red-600 rounded-full inline-block animate-ping" />
-                <span>{formatSeconds(recordingSeconds['speaking_p1'] || 0)}</span>
-              </div>
-            )}
+              {/* Timer or Status indicators */}
+              {recordingState['speaking_p1'] === 'recording' && (
+                <div className="flex items-center gap-2 text-red-600 font-mono font-bold animate-pulse">
+                  <span className="w-2.5 h-2.5 bg-red-600 rounded-full inline-block animate-ping" />
+                  <span>{formatSeconds(recordingSeconds['speaking_p1'] || 0)}</span>
+                </div>
+              )}
 
-            {recordingState['speaking_p1'] === 'saving' && (
-              <div className="flex items-center gap-2 text-indigo-900 font-semibold animate-bounce text-sm">
-                <RefreshCw className="w-4 h-4 animate-spin" /> Đang lưu ghi âm bài nói...
-              </div>
-            )}
+              {recordingState['speaking_p1'] === 'saving' && (
+                <div className="flex items-center gap-2 text-indigo-900 font-semibold animate-bounce text-sm">
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Đang lưu ghi âm bài nói...
+                </div>
+              )}
 
+              {recordingState['speaking_p1'] === 'done' && (
+                <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-xl text-xs font-extrabold">
+                  <Check className="w-4 h-4" /> Đã lưu bài nói thành công ✓
+                </div>
+              )}
+            </div>
+
+            {/* Reassurance text */}
             {recordingState['speaking_p1'] === 'done' && (
-              <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-xl text-xs font-extrabold">
-                <Check className="w-4 h-4" /> Đã lưu bài nói thành công ✓
+              <div className="text-xs text-slate-500 flex items-center gap-2 font-medium">
+                <span className="font-sans italic">Hệ thống đã lưu bản ghi âm an toàn.</span>
               </div>
             )}
           </div>
 
-          {/* Reassurance text */}
-          {recordingState['speaking_p1'] === 'done' && (
-            <div className="text-xs text-slate-500 flex items-center gap-2 font-medium">
-              <span className="font-sans italic">Hệ thống đã lưu bản ghi âm an toàn.</span>
+          {/* Audio Player Preview for Part 1 */}
+          {(audioUrls['speaking_p1'] || answers['speaking_p1']) && (
+            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+              <span className="text-xs font-bold text-slate-700 block">Nghe lại bản ghi âm của bạn:</span>
+              <audio
+                src={audioUrls['speaking_p1'] || answers['speaking_p1']}
+                controls
+                className="w-full h-8 rounded-lg"
+                preload="metadata"
+              />
             </div>
           )}
         </div>
-
-        {/* Audio Player Preview for Part 1 */}
-        {(audioUrls['speaking_p1'] || answers['speaking_p1']) && (
-          <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-            <span className="text-xs font-bold text-slate-700 block">Nghe lại bản ghi âm của bạn:</span>
-            <audio
-              src={audioUrls['speaking_p1'] || answers['speaking_p1']}
-              controls
-              className="w-full h-8 rounded-lg"
-              preload="metadata"
-            />
-          </div>
-        )}
-      </div>
+      )}
 
       {/* PART 2: INTERVIEW QUESTIONS */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <Volume2 className="w-5 h-5 text-indigo-900" />
-            <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">SPEAKING BÀI 2: TRẢ LỜI CÂU HỎI PHỎNG VẤN (B2)</h3>
+      {speakingQuestions && speakingQuestions.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Volume2 className="w-5 h-5 text-indigo-900" />
+              <h3 className="font-extrabold text-[#1e3a8a] text-base uppercase">SPEAKING BÀI 2: TRẢ LỜI CÂU HỎI PHỎNG VẤN</h3>
+            </div>
+            <span className="text-xs font-mono font-bold bg-amber-50 text-amber-850 px-2.5 py-1 rounded-md">
+              Nghe câu hỏi + Ghi âm 1 lần duy nhất
+            </span>
           </div>
-          <span className="text-xs font-mono font-bold bg-amber-50 text-amber-850 px-2.5 py-1 rounded-md">
-            Nghe câu hỏi + Ghi âm 1 lần duy nhất
-          </span>
-        </div>
 
-        <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide">
-          Bấm nút AI để nghe câu hỏi đọc to. Sau đó bấm nút Ghi âm để trả lời câu hỏi (<span className="text-red-600 font-bold">Chỉ được ghi âm 1 lần duy nhất</span>):
-        </p>
+          <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide">
+            Bấm nút AI để nghe câu hỏi đọc to. Sau đó bấm nút Ghi âm để trả lời câu hỏi (<span className="text-red-600 font-bold">Chỉ được ghi âm 1 lần duy nhất</span>):
+          </p>
 
-        {/* Questions Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {speakingQuestions.map((q, idx) => {
-            const id = `speaking_p2_q${idx + 1}`;
-            const state = recordingState[id] || 'idle';
-            const seconds = recordingSeconds[id] || 0;
-            const isCompleted = state === 'done';
+          {/* Questions Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {speakingQuestions.map((q, idx) => {
+              const id = `speaking_p2_q${idx + 1}`;
+              const state = recordingState[id] || 'idle';
+              const seconds = recordingSeconds[id] || 0;
+              const isCompleted = state === 'done';
 
-            return (
-              <div key={q.id} className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50 flex flex-col justify-between space-y-5">
-                <div className="space-y-3">
-                  <span className="text-xs font-extrabold text-indigo-900 tracking-wider block">CÂU HỎI {idx + 1}</span>
-                  
-                  {/* AI Read Question Aloud Button */}
-                  <button
-                    onClick={() => handleAISpeak(q.text)}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-950 font-bold rounded-xl text-xs border border-indigo-200 transition-all select-none cursor-pointer"
-                    title="Nhấp vào đây để AI đọc to câu hỏi này"
-                  >
-                    <Volume2 className="w-4 h-4 text-indigo-900 animate-pulse" />
-                    <span>Nhấp vào đây để nghe câu hỏi</span>
-                  </button>
+              return (
+                <div key={q.id} className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50 flex flex-col justify-between space-y-5">
+                  <div className="space-y-3">
+                    <span className="text-xs font-extrabold text-indigo-900 tracking-wider block">CÂU HỎI {idx + 1}</span>
+                    
+                    {/* AI Read Question Aloud Button */}
+                    <button
+                      onClick={() => handleAISpeak(q.text)}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-950 font-bold rounded-xl text-xs border border-indigo-200 transition-all select-none cursor-pointer"
+                      title="Nhấp vào đây để AI đọc to câu hỏi này"
+                    >
+                      <Volume2 className="w-4 h-4 text-indigo-900 animate-pulse" />
+                      <span>Nhấp vào đây để nghe câu hỏi</span>
+                    </button>
 
-                  <p className="text-sm font-extrabold text-slate-800 leading-relaxed font-sans italic pt-1 text-center">
-                    "{q.text}"
-                  </p>
-                </div>
-
-                {/* Recorder Control inside card */}
-                <div className="pt-2 flex flex-col gap-2">
-                  <div className="flex items-center justify-center gap-2">
-                    {state === 'recording' ? (
-                      <button
-                        onClick={() => stopRecording(id)}
-                        className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
-                      >
-                        <Square className="w-3.5 h-3.5 fill-current" /> Stop (Dừng & Lưu)
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => startRecording(id)}
-                        disabled={state === 'saving' || isCompleted}
-                        className="w-full bg-indigo-900 hover:bg-indigo-850 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
-                      >
-                        <Mic className="w-3.5 h-3.5" /> 
-                        {isCompleted ? 'Locked (Đã khóa)' : 'Ghi âm'}
-                      </button>
-                    )}
+                    <p className="text-sm font-extrabold text-slate-800 leading-relaxed font-sans italic pt-1 text-center">
+                      "{q.text}"
+                    </p>
                   </div>
 
-                  {state === 'recording' && (
-                    <div className="flex items-center justify-center gap-1.5 text-red-600 font-mono font-black text-xs animate-pulse">
-                      <span className="w-2 h-2 bg-red-600 rounded-full inline-block animate-ping" />
-                      <span>{formatSeconds(seconds)}</span>
-                    </div>
-                  )}
-
-                  {state === 'saving' && (
-                    <span className="text-indigo-900 font-extrabold text-xs flex items-center justify-center gap-1">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving audio file...
-                    </span>
-                  )}
-
-                  {isCompleted && (
-                    <div className="space-y-1.5 pt-1">
-                      <span className="flex items-center justify-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 rounded-lg text-xs font-bold">
-                        <Check className="w-3.5 h-3.5" /> Đã lưu bài nói ✓
-                      </span>
-                      {(audioUrls[id] || answers[id]) && (
-                        <audio src={audioUrls[id] || answers[id]} controls className="w-full h-7" preload="metadata" />
+                  {/* Recorder Control inside card */}
+                  <div className="pt-2 flex flex-col gap-2">
+                    <div className="flex items-center justify-center gap-2">
+                      {state === 'recording' ? (
+                        <button
+                          onClick={() => stopRecording(id)}
+                          className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" /> Stop (Dừng & Lưu)
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => startRecording(id)}
+                          disabled={state === 'saving' || isCompleted}
+                          className="w-full bg-indigo-900 hover:bg-indigo-850 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
+                        >
+                          <Mic className="w-3.5 h-3.5" /> 
+                          {isCompleted ? 'Locked (Đã khóa)' : 'Ghi âm'}
+                        </button>
                       )}
                     </div>
-                  )}
+
+                    {state === 'recording' && (
+                      <div className="flex items-center justify-center gap-1.5 text-red-600 font-mono font-black text-xs animate-pulse">
+                        <span className="w-2 h-2 bg-red-600 rounded-full inline-block animate-ping" />
+                        <span>{formatSeconds(seconds)}</span>
+                      </div>
+                    )}
+
+                    {state === 'saving' && (
+                      <span className="text-indigo-900 font-extrabold text-xs flex items-center justify-center gap-1">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving audio file...
+                      </span>
+                    )}
+
+                    {isCompleted && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="flex items-center justify-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 rounded-lg text-xs font-bold">
+                          <Check className="w-3.5 h-3.5" /> Đã lưu bài nói ✓
+                        </span>
+                        {(audioUrls[id] || answers[id]) && (
+                          <audio src={audioUrls[id] || answers[id]} controls className="w-full h-7" preload="metadata" />
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
     </div>
   );

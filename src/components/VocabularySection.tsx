@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, ChevronLeft, ChevronRight, HelpCircle, CheckCircle } from 'lucide-react';
-import { VOCABULARY_QUESTIONS } from '../questions';
 
 interface VocabularySectionProps {
   answers: Record<string, string>;
@@ -17,7 +16,7 @@ export default function VocabularySection({
   onSkipQuestion,
   currentQuestionId,
   setCurrentQuestionId,
-  questions = VOCABULARY_QUESTIONS
+  questions = []
 }: VocabularySectionProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const QUESTIONS_PER_PAGE = 5;

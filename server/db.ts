@@ -308,16 +308,24 @@ class DatabaseManager {
     return this.data.candidates.find((c) => c.id === id);
   }
 
-  public getCandidateByPhone(phone: string): Candidate | undefined {
+  public getCandidateByPhone(phone: string, examId?: string): Candidate | undefined {
     const formattedPhone = phone.trim();
+    if (examId) {
+      return this.data.candidates.find((c) => c.phone.trim() === formattedPhone && c.examId === examId);
+    }
     return this.data.candidates.find((c) => c.phone.trim() === formattedPhone);
+  }
+
+  public getCandidatesByPhone(phone: string): Candidate[] {
+    const formattedPhone = phone.trim();
+    return this.data.candidates.filter((c) => c.phone.trim() === formattedPhone);
   }
 
   public registerCandidate(fullName: string, phone: string, examId: string = 'default-exam'): Candidate {
     const trimmedPhone = phone.trim();
-    const existing = this.getCandidateByPhone(trimmedPhone);
+    const existing = this.getCandidateByPhone(trimmedPhone, examId);
     if (existing) {
-      throw new Error('Số điện thoại này đã từng đăng ký tham gia thi đánh giá năng lực.');
+      throw new Error('Số điện thoại này đã từng đăng ký tham gia bộ đề thi này.');
     }
 
     const newCandidate: Candidate = {

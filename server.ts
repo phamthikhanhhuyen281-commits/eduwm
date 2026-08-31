@@ -132,22 +132,23 @@ async function startServer() {
         return res.status(400).json({ error: 'Số điện thoại này đã bị khóa trên hệ thống. Vui lòng liên hệ Giáo viên để được hỗ trợ.' });
       }
 
-      // Check if candidate already exists
-      const existing = db.getCandidateByPhone(phone);
+      // Check if candidate already exists for this specific exam
+      const targetExamId = examId || 'default-exam';
+      const existing = db.getCandidateByPhone(phone, targetExamId);
       if (existing) {
-        if (existing.submittedAt) {
-          return res.status(400).json({
-            error: 'Số điện thoại này đã hoàn thành bài thi trước đó. Mỗi thí sinh chỉ được thi duy nhất 1 lần.'
-          });
-        }
-        // Candidate already registered but not submitted yet -> Resume session!
-        db.addLog(existing.id, 'Thí sinh tải lại trang hoặc đăng nhập lại để tiếp tục làm bài.');
-        const exam = db.getExamById(existing.examId || 'default-exam');
-        return res.json({ candidate: existing, exam, resumed: true, restoredAnswers: flattenAnswers(existing.answers) });
+        // Candidate already registered for this exam -> Return session (can view result if submitted, or resume if not)
+        db.addLog(existing.id, 'Thí sinh đăng nhập lại vào bộ đề thi này.');
+        const exam = db.getExamById(existing.examId || targetExamId);
+        return res.json({
+          candidate: existing,
+          exam,
+          resumed: true,
+          restoredAnswers: flattenAnswers(existing.answers)
+        });
       }
 
-      // Register new candidate
-      const newCandidate = db.registerCandidate(fullName, phone, examId || 'default-exam');
+      // Register new candidate for this exam
+      const newCandidate = db.registerCandidate(fullName, phone, targetExamId);
       const exam = db.getExamById(newCandidate.examId);
       return res.json({ candidate: newCandidate, exam, resumed: false });
     } catch (error: any) {

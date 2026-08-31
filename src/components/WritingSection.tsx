@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PenTool, CheckCircle, RefreshCw, HelpCircle } from 'lucide-react';
-import { WRITING_QUESTIONS } from '../questions';
 
 interface WritingSectionProps {
   answers: Record<string, string>;
@@ -15,7 +14,7 @@ export default function WritingSection({
   onAnswerChange,
   onSkipQuestion,
   onSaveProgress,
-  questions = WRITING_QUESTIONS
+  questions = []
 }: WritingSectionProps) {
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'dirty'>('saved');
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);

@@ -1,6 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Play, Volume2, Headphones, AlertTriangle, HelpCircle, RefreshCw, CheckCircle2, Lock } from 'lucide-react';
-import { LISTENING_PART_1, LISTENING_PART_2 } from '../questions';
 import { candidateService } from '../services/candidateService';
 
 interface ListeningSectionProps {

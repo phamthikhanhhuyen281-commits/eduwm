@@ -515,15 +515,19 @@ export const ManualExamBuilder: React.FC<ManualExamBuilderProps> = ({
       return;
     }
 
-    const newMCQ = {
+    const newMCQ: any = {
       id: uniqueId,
       type: 'mcq',
       text: fQuestionText.trim(),
       options: [...fOptions],
-      answer: fCorrectAnswer,
-      audioUrl: fAudioUrl.trim() || undefined,
-      imageUrl: fImageUrl.trim() || undefined
+      answer: fCorrectAnswer
     };
+    if (fAudioUrl.trim()) {
+      newMCQ.audioUrl = fAudioUrl.trim();
+    }
+    if (fImageUrl.trim()) {
+      newMCQ.imageUrl = fImageUrl.trim();
+    }
 
     if (selectedSkill === 'listening') {
       if (selectedType === 'l_part1_pic') {

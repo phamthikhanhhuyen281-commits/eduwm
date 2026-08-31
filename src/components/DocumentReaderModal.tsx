@@ -20,7 +20,9 @@ import {
   Minimize2,
   AlertCircle,
   Loader2,
-  BookOpen
+  BookOpen,
+  RefreshCw,
+  FileSpreadsheet
 } from 'lucide-react';
 import mammoth from 'mammoth';
 
@@ -50,71 +52,265 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [fontSize, setFontSize] = useState<number>(16);
   const [isSerif, setIsSerif] = useState<boolean>(false);
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [audioError, setAudioError] = useState<boolean>(false);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [viewerMode, setViewerMode] = useState<'mammoth' | 'gview' | 'office' | 'rawText'>('mammoth');
+  const [iframeKey, setIframeKey] = useState<number>(0);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // Determine media type
   const urlLower = (material?.url || '').toLowerCase();
   const typeLower = (material?.type || '').toLowerCase();
+  const fileNameLower = (material?.fileName || '').toLowerCase();
 
+  // Helper: Detect Google Drive, Docs, Sheets, Slides, Forms
+  const getGoogleEmbedInfo = (url: string) => {
+    if (!url) return null;
+    
+    // Google Drive File
+    // e.g. https://drive.google.com/file/d/1A2B3C.../view?usp=sharing or https://drive.google.com/open?id=1A2B3C...
+    const driveMatch = url.match(/drive\.google\.com\/(?:file\/d\/([a-zA-Z0-9_-]+)|open\?id=([a-zA-Z0-9_-]+))/);
+    if (driveMatch) {
+      const fileId = driveMatch[1] || driveMatch[2];
+      return {
+        type: 'gdrive',
+        embedUrl: `https://drive.google.com/file/d/${fileId}/preview`,
+        title: 'Google Drive Document'
+      };
+    }
+
+    // Google Docs Document
+    const docsMatch = url.match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/);
+    if (docsMatch) {
+      return {
+        type: 'gdocs',
+        embedUrl: `https://docs.google.com/document/d/${docsMatch[1]}/preview`,
+        title: 'Google Docs Document'
+      };
+    }
+
+    // Google Sheets Spreadsheet
+    const sheetsMatch = url.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    if (sheetsMatch) {
+      return {
+        type: 'gsheets',
+        embedUrl: `https://docs.google.com/spreadsheets/d/${sheetsMatch[1]}/preview`,
+        title: 'Google Sheets Spreadsheet'
+      };
+    }
+
+    // Google Slides Presentation
+    const slidesMatch = url.match(/docs\.google\.com\/presentation\/d\/([a-zA-Z0-9_-]+)/);
+    if (slidesMatch) {
+      return {
+        type: 'gslides',
+        embedUrl: `https://docs.google.com/presentation/d/${slidesMatch[1]}/embed?start=false&loop=false&delayms=3000`,
+        title: 'Google Slides Presentation'
+      };
+    }
+
+    // Google Forms
+    const formsMatch = url.match(/docs\.google\.com\/forms\/d\/(?:e\/)?([a-zA-Z0-9_-]+)/);
+    if (formsMatch) {
+      return {
+        type: 'gforms',
+        embedUrl: `https://docs.google.com/forms/d/${formsMatch[1]}/viewform?embedded=true`,
+        title: 'Google Form'
+      };
+    }
+
+    return null;
+  };
+
+  const googleEmbedInfo = getGoogleEmbedInfo(material?.url || '');
+
+  // Media Type Flags
   const isWordDoc =
-    typeLower === 'docx' ||
-    typeLower === 'doc' ||
-    urlLower.endsWith('.docx') ||
-    urlLower.endsWith('.doc') ||
-    urlLower.includes('word') ||
-    (material?.fileName && (material.fileName.endsWith('.docx') || material.fileName.endsWith('.doc')));
+    !googleEmbedInfo &&
+    (typeLower === 'docx' ||
+      typeLower === 'doc' ||
+      urlLower.endsWith('.docx') ||
+      urlLower.endsWith('.doc') ||
+      fileNameLower.endsWith('.docx') ||
+      fileNameLower.endsWith('.doc') ||
+      (typeLower === 'document' && !urlLower.endsWith('.pdf')));
 
   const isPdf =
-    typeLower === 'pdf' ||
-    urlLower.endsWith('.pdf') ||
-    (material?.fileName && material.fileName.endsWith('.pdf'));
+    !googleEmbedInfo &&
+    (typeLower === 'pdf' ||
+      urlLower.endsWith('.pdf') ||
+      fileNameLower.endsWith('.pdf') ||
+      material?.url?.startsWith('data:application/pdf'));
 
   const isVideo =
-    typeLower === 'video' ||
-    urlLower.includes('youtube.com') ||
-    urlLower.includes('youtu.be') ||
-    urlLower.endsWith('.mp4') ||
-    urlLower.endsWith('.webm') ||
-    urlLower.endsWith('.mov');
+    !googleEmbedInfo &&
+    (typeLower === 'video' ||
+      urlLower.includes('youtube.com') ||
+      urlLower.includes('youtu.be') ||
+      urlLower.includes('vimeo.com') ||
+      urlLower.endsWith('.mp4') ||
+      urlLower.endsWith('.webm') ||
+      urlLower.endsWith('.mov') ||
+      urlLower.endsWith('.m4v') ||
+      fileNameLower.endsWith('.mp4'));
 
   const isAudio =
-    typeLower === 'audio' ||
-    urlLower.endsWith('.mp3') ||
-    urlLower.endsWith('.wav') ||
-    urlLower.endsWith('.m4a') ||
-    urlLower.endsWith('.ogg');
+    !googleEmbedInfo &&
+    (typeLower === 'audio' ||
+      urlLower.endsWith('.mp3') ||
+      urlLower.endsWith('.wav') ||
+      urlLower.endsWith('.m4a') ||
+      urlLower.endsWith('.ogg') ||
+      urlLower.endsWith('.aac') ||
+      fileNameLower.endsWith('.mp3') ||
+      fileNameLower.endsWith('.wav'));
 
   const isImage =
-    typeLower === 'image' ||
-    urlLower.endsWith('.png') ||
-    urlLower.endsWith('.jpg') ||
-    urlLower.endsWith('.jpeg') ||
-    urlLower.endsWith('.webp');
+    !googleEmbedInfo &&
+    (typeLower === 'image' ||
+      urlLower.endsWith('.png') ||
+      urlLower.endsWith('.jpg') ||
+      urlLower.endsWith('.jpeg') ||
+      urlLower.endsWith('.webp') ||
+      urlLower.endsWith('.gif') ||
+      urlLower.endsWith('.svg') ||
+      material?.url?.startsWith('data:image/'));
 
-  // Convert Base64 or URL to ArrayBuffer and render with Mammoth for DOCX
+  const isSpreadsheet =
+    !googleEmbedInfo &&
+    (typeLower === 'xlsx' ||
+      typeLower === 'xls' ||
+      typeLower === 'csv' ||
+      urlLower.endsWith('.xlsx') ||
+      urlLower.endsWith('.xls') ||
+      urlLower.endsWith('.csv') ||
+      fileNameLower.endsWith('.xlsx') ||
+      fileNameLower.endsWith('.xls') ||
+      fileNameLower.endsWith('.csv'));
+
+  const isPresentation =
+    !googleEmbedInfo &&
+    (typeLower === 'pptx' ||
+      typeLower === 'ppt' ||
+      urlLower.endsWith('.pptx') ||
+      urlLower.endsWith('.ppt') ||
+      fileNameLower.endsWith('.pptx') ||
+      fileNameLower.endsWith('.ppt'));
+
+  const isTextFile =
+    !googleEmbedInfo &&
+    (typeLower === 'txt' ||
+      typeLower === 'text' ||
+      typeLower === 'md' ||
+      urlLower.endsWith('.txt') ||
+      urlLower.endsWith('.md') ||
+      urlLower.endsWith('.json') ||
+      fileNameLower.endsWith('.txt') ||
+      fileNameLower.endsWith('.md'));
+
+  // Clean up Blob URLs on unmount/close
+  useEffect(() => {
+    return () => {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+      }
+    };
+  }, [pdfBlobUrl]);
+
+  // Convert Base64 PDF to blob URL for full native browser compatibility
+  useEffect(() => {
+    if (!isOpen || !material) {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+        setPdfBlobUrl(null);
+      }
+      return;
+    }
+
+    if (isPdf && material.url.startsWith('data:')) {
+      try {
+        const parts = material.url.split(',');
+        const mime = parts[0].match(/:(.*?);/)?.[1] || 'application/pdf';
+        const b64 = parts[1];
+        const binary = window.atob(b64);
+        const len = binary.length;
+        const buffer = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          buffer[i] = binary.charCodeAt(i);
+        }
+        const blob = new Blob([buffer], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        setPdfBlobUrl(blobUrl);
+      } catch (err) {
+        console.warn('Failed to convert base64 PDF to blob:', err);
+      }
+    } else {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+        setPdfBlobUrl(null);
+      }
+    }
+  }, [isOpen, material?.url, isPdf]);
+
+  // Load Word (.docx) or Text Files
   useEffect(() => {
     if (!isOpen || !material) {
       setDocHtml('');
       setRawText('');
       setError(null);
+      setViewerMode('mammoth');
       return;
+    }
+
+    if (isTextFile) {
+      let isMounted = true;
+      setLoading(true);
+      setError(null);
+
+      const loadText = async () => {
+        try {
+          let text = '';
+          if (material.url.startsWith('data:')) {
+            const base64Content = material.url.split(',')[1];
+            text = decodeURIComponent(escape(window.atob(base64Content)));
+          } else {
+            const fetchUrl = material.url.startsWith('http')
+              ? `/api/audio-proxy?url=${encodeURIComponent(material.url)}`
+              : material.url;
+            const res = await fetch(fetchUrl);
+            text = await res.text();
+          }
+          if (isMounted) {
+            setRawText(text);
+            setDocHtml(`<pre class="whitespace-pre-wrap font-mono text-sm leading-relaxed">${text}</pre>`);
+            setLoading(false);
+          }
+        } catch (e: any) {
+          if (isMounted) {
+            setError('Không thể tải tệp văn bản này.');
+            setLoading(false);
+          }
+        }
+      };
+
+      loadText();
+      return () => {
+        isMounted = false;
+      };
     }
 
     if (isWordDoc) {
       let isMounted = true;
       setLoading(true);
       setError(null);
+      setViewerMode('mammoth');
 
       const loadWordDocument = async () => {
         try {
           let arrayBuffer: ArrayBuffer;
 
           if (material.url.startsWith('data:')) {
-            // Base64 data URL
             const base64Content = material.url.split(',')[1];
             const binaryString = window.atob(base64Content);
             const bytes = new Uint8Array(binaryString.length);
@@ -123,7 +319,6 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
             }
             arrayBuffer = bytes.buffer;
           } else {
-            // Remote or relative URL
             const fetchUrl = material.url.startsWith('http')
               ? `/api/audio-proxy?url=${encodeURIComponent(material.url)}`
               : material.url;
@@ -144,8 +339,14 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
         } catch (err: any) {
           console.warn('Mammoth DOCX parsing failed:', err);
           if (isMounted) {
-            setError('Không thể tự động phân tích định dạng tệp Word này trực tiếp. Bạn có thể tải tệp về máy hoặc mở qua Office Online.');
-            setLoading(false);
+            // Fallback: If it's a remote URL, offer Google Docs Viewer or Office Viewer
+            if (material.url.startsWith('http')) {
+              setViewerMode('gview');
+              setLoading(false);
+            } else {
+              setError('Không thể phân tích trực tiếp định dạng tệp Word này. Bạn có thể tải tệp về máy để đọc hoặc xem online.');
+              setLoading(false);
+            }
           }
         }
       };
@@ -156,7 +357,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
         isMounted = false;
       };
     }
-  }, [isOpen, material, isWordDoc]);
+  }, [isOpen, material, isWordDoc, isTextFile]);
 
   if (!isOpen || !material) return null;
 
@@ -187,6 +388,8 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
     return url;
   };
 
+  const activePdfUrl = pdfBlobUrl || material.url;
+
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-[12000] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-hidden">
@@ -195,17 +398,23 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.96 }}
           className={`bg-white rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-slate-200 transition-all duration-300 ${
-            isFullscreen ? 'w-full h-full rounded-none' : 'max-w-5xl w-full max-h-[92vh] h-[92vh]'
+            isFullscreen ? 'w-full h-full rounded-none' : 'max-w-6xl w-full max-h-[94vh] h-[94vh]'
           }`}
         >
-          {/* Top Bar Header */}
+          {/* TOP BAR HEADER */}
           <div className="bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between gap-4 select-none shrink-0">
             <div className="flex items-center gap-3 min-w-0">
               <div className="p-2 bg-slate-800 rounded-xl text-indigo-300 shrink-0">
-                {isWordDoc ? (
+                {googleEmbedInfo ? (
+                  <BookOpen className="w-5 h-5 text-amber-400" />
+                ) : isWordDoc ? (
                   <FileCode className="w-5 h-5 text-blue-400" />
                 ) : isPdf ? (
                   <FileText className="w-5 h-5 text-red-400" />
+                ) : isSpreadsheet ? (
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+                ) : isPresentation ? (
+                  <FileText className="w-5 h-5 text-orange-400" />
                 ) : isVideo ? (
                   <Video className="w-5 h-5 text-purple-400" />
                 ) : isAudio ? (
@@ -219,13 +428,37 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
               <div className="min-w-0">
                 <h3 className="text-sm font-black truncate text-white leading-snug">{material.title}</h3>
                 <p className="text-[11px] text-slate-400 truncate font-mono">
-                  {material.fileName || material.type?.toUpperCase() || 'TÀI LIỆU HỌC TẬP'}
+                  {googleEmbedInfo?.title || material.fileName || material.type?.toUpperCase() || 'TÀI LIỆU HỌC TẬP TRỰC TUYẾN'}
                 </p>
               </div>
             </div>
 
             {/* Header Controls */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Reload / Refresh frame */}
+              {(googleEmbedInfo || isPdf || isPresentation || isSpreadsheet || viewerMode === 'gview') && (
+                <button
+                  onClick={() => setIframeKey((prev) => prev + 1)}
+                  className="text-slate-300 hover:text-white p-2 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  title="Tải lại trang tài liệu"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              )}
+
+              {/* Open in external tab */}
+              {material.url.startsWith('http') && (
+                <a
+                  href={material.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-slate-300 hover:text-white p-2 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  title="Mở tài liệu trong tab mới"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              )}
+
               {/* Fullscreen Toggle */}
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
@@ -246,10 +479,10 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
             </div>
           </div>
 
-          {/* Sub-toolbar (Only for Document/Word/PDF view) */}
-          {isWordDoc && !loading && !error && (
+          {/* SUB-TOOLBAR FOR WORD / TEXT */}
+          {(isWordDoc || isTextFile) && viewerMode === 'mammoth' && !loading && !error && (
             <div className="bg-slate-100 border-b border-slate-200 px-5 py-2 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
-              {/* Left Toolbar: Font size & Typography */}
+              {/* Left: Font controls */}
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">Cỡ chữ:</span>
                 <button
@@ -270,7 +503,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                 <button
                   onClick={() => setFontSize(16)}
                   className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer ml-1"
-                  title="Đặt lại cỡ chữ"
+                  title="Đặt lại cỡ chữ mặc định"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>
@@ -291,7 +524,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                 </button>
               </div>
 
-              {/* Right Toolbar: Copy, Print, Download */}
+              {/* Right: Actions */}
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleCopyText}
@@ -320,23 +553,38 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
             </div>
           )}
 
-          {/* Main Viewer Body */}
-          <div className="flex-grow overflow-y-auto bg-slate-100/70 p-4 sm:p-8 flex justify-center items-start">
-            {/* 1. WORD DOCUMENT VIEW (.docx / .doc) */}
-            {isWordDoc && (
+          {/* MAIN VIEWER BODY */}
+          <div className="flex-grow overflow-y-auto bg-slate-100/70 p-2 sm:p-6 flex justify-center items-stretch">
+            
+            {/* 1. GOOGLE DRIVE / DOCS / SHEETS / SLIDES EMBEDDED VIEW */}
+            {googleEmbedInfo && (
+              <div className="w-full h-full min-h-[75vh] flex flex-col bg-white rounded-2xl overflow-hidden shadow-lg border border-slate-200">
+                <iframe
+                  key={`gembed-${iframeKey}`}
+                  src={googleEmbedInfo.embedUrl}
+                  title={material.title}
+                  className="w-full h-full min-h-[75vh] border-0 rounded-2xl"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                  allowFullScreen
+                />
+              </div>
+            )}
+
+            {/* 2. WORD DOCUMENT VIEW (.docx / .doc) - DIRECT MAMMOTH HTML */}
+            {!googleEmbedInfo && isWordDoc && viewerMode === 'mammoth' && (
               <div className="w-full max-w-4xl flex flex-col items-center">
                 {loading ? (
                   <div className="flex flex-col items-center justify-center py-24 space-y-4 text-slate-500">
                     <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
-                    <p className="text-sm font-bold text-slate-700">Đang đọc và định dạng tệp Word trực tiếp...</p>
-                    <p className="text-xs text-slate-400">Đang chuyển đổi bảng biểu, hình ảnh và cấu trúc văn bản</p>
+                    <p className="text-sm font-bold text-slate-700">Đang đọc và định dạng tệp Word trực tiếp trên web...</p>
+                    <p className="text-xs text-slate-400">Đang tối ưu bảng biểu, hình ảnh và cấu trúc văn bản</p>
                   </div>
                 ) : error ? (
                   <div className="bg-white border border-amber-200 rounded-3xl p-8 max-w-md text-center space-y-4 shadow-sm my-8">
                     <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto">
                       <AlertCircle className="w-8 h-8" />
                     </div>
-                    <h4 className="text-base font-bold text-slate-900">Không thể xem trực tiếp tệp Word này</h4>
+                    <h4 className="text-base font-bold text-slate-900">Không thể phân tích định dạng Word trực tiếp</h4>
                     <p className="text-xs text-slate-500 leading-relaxed">{error}</p>
                     <div className="flex flex-col gap-2 pt-2">
                       <a
@@ -346,14 +594,16 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                       >
                         <Download className="w-4 h-4" /> Tải file Word về máy để đọc
                       </a>
-                      <a
-                        href={`https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(material.url)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors border border-slate-200"
-                      >
-                        <ExternalLink className="w-4 h-4" /> Mở qua Microsoft Office Online
-                      </a>
+                      {material.url.startsWith('http') && (
+                        <a
+                          href={`https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(material.url)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors border border-slate-200"
+                        >
+                          <ExternalLink className="w-4 h-4" /> Mở qua Google Docs Viewer
+                        </a>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -361,7 +611,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                   <div
                     ref={contentRef}
                     style={{ fontSize: `${fontSize}px` }}
-                    className={`bg-white text-slate-900 w-full min-h-[850px] p-8 sm:p-14 rounded-2xl shadow-lg border border-slate-200/80 leading-relaxed ${
+                    className={`bg-white text-slate-900 w-full min-h-[850px] p-6 sm:p-12 rounded-2xl shadow-lg border border-slate-200/80 leading-relaxed ${
                       isSerif ? 'font-serif' : 'font-sans'
                     } docx-rendered-content`}
                   >
@@ -386,44 +636,55 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                     {/* Word Converted HTML */}
                     <div
                       dangerouslySetInnerHTML={{ __html: docHtml }}
-                      className="prose max-w-none space-y-4"
+                      className="prose max-w-none space-y-4 text-slate-800"
                     />
                   </div>
                 )}
               </div>
             )}
 
-            {/* 2. PDF DOCUMENT VIEW */}
-            {isPdf && (
+            {/* 3. GOOGLE DOCS VIEWER FALLBACK (For remote PPTX, XLSX, DOCX, DOC) */}
+            {!googleEmbedInfo && (isPresentation || isSpreadsheet || (isWordDoc && viewerMode === 'gview')) && material.url.startsWith('http') && (
               <div className="w-full h-full min-h-[75vh] flex flex-col bg-white rounded-2xl overflow-hidden shadow-lg border border-slate-200">
-                <object
-                  data={`${material.url}#toolbar=1`}
-                  type="application/pdf"
-                  className="w-full h-full min-h-[75vh] rounded-2xl"
-                >
-                  <iframe
-                    src={`${material.url}#toolbar=1`}
-                    title={material.title}
-                    className="w-full h-full min-h-[75vh] border-0"
-                  >
-                    <div className="p-8 text-center space-y-4">
-                      <p className="text-slate-600">Trình duyệt không hỗ trợ nhúng trực tiếp PDF.</p>
-                      <a
-                        href={material.url}
-                        download
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-900 text-white rounded-xl font-bold text-xs"
-                      >
-                        <Download className="w-4 h-4" /> Tải về để xem
-                      </a>
-                    </div>
-                  </iframe>
-                </object>
+                <iframe
+                  key={`gview-${iframeKey}`}
+                  src={`https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(material.url)}`}
+                  title={material.title}
+                  className="w-full h-full min-h-[75vh] border-0 rounded-2xl"
+                  allowFullScreen
+                />
               </div>
             )}
 
-            {/* 3. VIDEO VIEW */}
-            {isVideo && (
-              <div className="w-full max-w-4xl aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl flex items-center justify-center">
+            {/* 4. PDF DOCUMENT VIEW */}
+            {!googleEmbedInfo && isPdf && (
+              <div className="w-full h-full min-h-[75vh] flex flex-col bg-white rounded-2xl overflow-hidden shadow-lg border border-slate-200">
+                <iframe
+                  key={`pdf-${iframeKey}`}
+                  src={`${activePdfUrl}#toolbar=1`}
+                  title={material.title}
+                  className="w-full h-full min-h-[75vh] border-0 rounded-2xl"
+                />
+              </div>
+            )}
+
+            {/* 5. TEXT / MARKDOWN DOCUMENT VIEW */}
+            {!googleEmbedInfo && isTextFile && (
+              <div className="w-full max-w-4xl bg-white p-8 sm:p-12 rounded-2xl shadow-lg border border-slate-200 text-slate-900">
+                <div className="border-b border-slate-200 pb-4 mb-6">
+                  <h1 className="text-2xl font-black text-slate-950 mb-1">{material.title}</h1>
+                  <p className="text-xs text-slate-400 font-mono">{material.fileName || 'Tài liệu văn bản'}</p>
+                </div>
+                <div
+                  dangerouslySetInnerHTML={{ __html: docHtml }}
+                  className="prose max-w-none text-slate-800"
+                />
+              </div>
+            )}
+
+            {/* 6. VIDEO VIEW */}
+            {!googleEmbedInfo && isVideo && (
+              <div className="w-full max-w-4xl aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl flex items-center justify-center my-auto">
                 {material.url.includes('youtube') || material.url.includes('youtu.be') ? (
                   <iframe
                     src={getYoutubeEmbedUrl(material.url)}
@@ -443,8 +704,8 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
               </div>
             )}
 
-            {/* 4. AUDIO VIEW */}
-            {isAudio && (
+            {/* 7. AUDIO VIEW */}
+            {!googleEmbedInfo && isAudio && (
               <div className="w-full max-w-lg bg-white p-8 sm:p-10 rounded-3xl border border-slate-200 shadow-xl text-center space-y-6 my-auto">
                 <div className="w-24 h-24 bg-indigo-50 text-indigo-900 rounded-full flex items-center justify-center mx-auto shadow-inner">
                   <Headphones className="w-12 h-12" />
@@ -474,9 +735,9 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
               </div>
             )}
 
-            {/* 5. IMAGE VIEW */}
-            {isImage && (
-              <div className="w-full max-w-4xl flex flex-col items-center justify-center space-y-4">
+            {/* 8. IMAGE VIEW */}
+            {!googleEmbedInfo && isImage && (
+              <div className="w-full max-w-4xl flex flex-col items-center justify-center space-y-4 my-auto">
                 <div className="bg-white p-3 rounded-3xl shadow-xl border border-slate-200">
                   <img
                     src={material.url}
@@ -484,47 +745,52 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                     className="max-h-[75vh] max-w-full object-contain rounded-2xl"
                   />
                 </div>
-                <p className="text-xs text-slate-500 text-center">{material.title}</p>
+                <p className="text-xs text-slate-500 text-center font-semibold">{material.title}</p>
               </div>
             )}
 
-            {/* 6. GENERIC / LINK VIEW */}
-            {!isWordDoc && !isPdf && !isVideo && !isAudio && !isImage && (
-              <div className="w-full max-w-md bg-white p-8 rounded-3xl border border-slate-200 shadow-xl text-center space-y-6 my-auto">
-                <div className="w-20 h-20 bg-indigo-50 text-indigo-900 rounded-full flex items-center justify-center mx-auto">
-                  <ExternalLink className="w-10 h-10" />
+            {/* 9. GENERIC WEB EMBED / LINK VIEW */}
+            {!googleEmbedInfo &&
+              !isWordDoc &&
+              !isPdf &&
+              !isVideo &&
+              !isAudio &&
+              !isImage &&
+              !isTextFile &&
+              !isSpreadsheet &&
+              !isPresentation && (
+                <div className="w-full h-full min-h-[75vh] flex flex-col bg-white rounded-2xl overflow-hidden shadow-lg border border-slate-200">
+                  {material.url.startsWith('http') ? (
+                    <iframe
+                      key={`generic-${iframeKey}`}
+                      src={material.url}
+                      title={material.title}
+                      className="w-full h-full min-h-[75vh] border-0 rounded-2xl"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                    />
+                  ) : (
+                    <div className="p-8 text-center space-y-4 my-auto">
+                      <ExternalLink className="w-12 h-12 text-indigo-900 mx-auto" />
+                      <h4 className="text-lg font-bold text-slate-900">{material.title}</h4>
+                      <p className="text-xs text-slate-500">{material.description || 'Liên kết học liệu trực tuyến.'}</p>
+                      <a
+                        href={material.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-900 hover:bg-indigo-850 text-white rounded-xl font-bold text-xs shadow-md transition-colors"
+                      >
+                        <ExternalLink className="w-4 h-4" /> Mở liên kết trong tab mới
+                      </a>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <h4 className="text-lg font-black text-slate-900">{material.title}</h4>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {material.description || 'Liên kết học liệu trực tuyến ngoài.'}
-                  </p>
-                </div>
-                <div className="flex flex-col gap-3">
-                  <a
-                    href={material.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-3 bg-indigo-900 hover:bg-indigo-850 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer"
-                  >
-                    <ExternalLink className="w-4 h-4" /> Mở trang web liên kết
-                  </a>
-                  <a
-                    href={material.url}
-                    download={material.fileName || material.title}
-                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" /> Tải về máy
-                  </a>
-                </div>
-              </div>
-            )}
+              )}
           </div>
 
-          {/* Footer Bar */}
+          {/* FOOTER BAR */}
           <div className="bg-white px-6 py-3.5 border-t border-slate-200 flex justify-between items-center text-xs shrink-0">
             <div className="text-slate-500 text-[11px] truncate max-w-md">
-              💡 {isWordDoc ? 'Bạn đang đọc trực tiếp văn bản Word trên trình duyệt web.' : 'Trình xem tài liệu học tập trực tiếp.'}
+              💡 {isWordDoc ? 'Bạn đang xem tài liệu trực tiếp trên hệ thống trực tuyến.' : 'Trình xem tài liệu học tập trực tiếp.'}
             </div>
             <div className="flex items-center gap-2">
               <a
@@ -532,7 +798,7 @@ export const DocumentReaderModal: React.FC<DocumentReaderModalProps> = ({
                 download={material.fileName || material.title}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5" /> Tải về
+                <Download className="w-3.5 h-3.5" /> Tải về máy
               </a>
               <button
                 onClick={onClose}

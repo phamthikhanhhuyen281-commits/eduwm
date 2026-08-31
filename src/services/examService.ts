@@ -1,5 +1,5 @@
 import { collection, doc, getDocs, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, sanitizeForFirestore } from '../firebase';
 import {
   LISTENING_PART_1,
   LISTENING_PART_2,
@@ -106,8 +106,9 @@ export const examService = {
 
   async saveExam(exam: Exam): Promise<void> {
     try {
-      const docRef = doc(db, 'exams', exam.id);
-      await setDoc(docRef, exam);
+      const sanitizedExam = sanitizeForFirestore(exam);
+      const docRef = doc(db, 'exams', sanitizedExam.id || exam.id);
+      await setDoc(docRef, sanitizedExam);
     } catch (err) {
       console.error('Error saving exam:', err);
       throw err;

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BookOpen, ChevronLeft, ChevronRight, HelpCircle, CheckCircle } from 'lucide-react';
-import { GRAMMAR_QUESTIONS } from '../questions';
 
 interface GrammarSectionProps {
   answers: Record<string, string>;
@@ -17,7 +16,7 @@ export default function GrammarSection({
   onSkipQuestion,
   currentQuestionId,
   setCurrentQuestionId,
-  questions = GRAMMAR_QUESTIONS
+  questions = []
 }: GrammarSectionProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const QUESTIONS_PER_PAGE = 5;

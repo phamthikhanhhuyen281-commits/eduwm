@@ -1,6 +1,5 @@
 import React, { useEffect } from 'react';
 import { BookOpen, HelpCircle, CheckCircle } from 'lucide-react';
-import { READING_PASSAGE } from '../questions';
 
 interface ReadingSectionProps {
   answers: Record<string, string>;
@@ -22,7 +21,7 @@ export default function ReadingSection({
   onSkipQuestion,
   currentQuestionId,
   setCurrentQuestionId,
-  passage = READING_PASSAGE
+  passage = { title: '', text: '', questionsPartA: [], questionsPartB: [] }
 }: ReadingSectionProps) {
   // Combine all reading questions
   const allReadingQuestions = [

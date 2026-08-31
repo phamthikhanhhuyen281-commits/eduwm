@@ -1,5 +1,5 @@
 import { collection, doc, getDocs, getDoc, setDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, sanitizeForFirestore } from '../firebase';
 import { examService } from './examService';
 
 export interface CandidateLog {
@@ -178,6 +178,8 @@ export function autoGradeCandidate(candidate: Candidate, exam: any): Candidate['
   });
 
   const writingScore = candidate.writingScore || 0;
+  const writingQuestions = exam?.questions?.writingQuestions || [];
+  const writingMax = (writingQuestions.length > 0 || exam?.id === 'default-exam') ? 10 : 0;
   const totalAuto = listeningScore + grammarScore + vocabularyScore + readingScore;
   const total = totalAuto + writingScore;
   const maxPossible = 
@@ -187,7 +189,7 @@ export function autoGradeCandidate(candidate: Candidate, exam: any): Candidate['
     vocabularyQuestions.length + 
     readingPartA.length + 
     readingPartB.length + 
-    10;
+    writingMax;
 
   const percentage = maxPossible > 0 ? Math.round((total / maxPossible) * 100) : 0;
 
@@ -265,6 +267,37 @@ export const candidateService = {
     } catch (err) {
       console.error('Error checking lock state:', err);
       return false;
+    }
+  },
+
+  async getCandidatesByPhone(phone: string): Promise<Candidate[]> {
+    try {
+      const colRef = collection(db, 'candidates');
+      const q = query(colRef, where('phone', '==', phone.trim()));
+      const snap = await getDocs(q);
+      const list: Candidate[] = [];
+      snap.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as Candidate);
+      });
+      return list;
+    } catch (err) {
+      console.error('Error fetching candidates by phone:', err);
+      return [];
+    }
+  },
+
+  async getCandidateByPhoneAndExam(phone: string, examId: string): Promise<Candidate | null> {
+    try {
+      const colRef = collection(db, 'candidates');
+      const q = query(colRef, where('phone', '==', phone.trim()), where('examId', '==', examId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return { id: snap.docs[0].id, ...snap.docs[0].data() } as Candidate;
+      }
+      return null;
+    } catch (err) {
+      console.error('Error fetching candidate by phone and exam:', err);
+      return null;
     }
   },
 
@@ -375,7 +408,7 @@ export const candidateService = {
       scores: null,
     };
 
-    await setDoc(doc(db, 'candidates', id), newCand);
+    await setDoc(doc(db, 'candidates', id), sanitizeForFirestore(newCand));
     return {
       candidate: newCand,
       exam,
@@ -889,7 +922,8 @@ export const candidateService = {
 
   async updateCandidate(id: string, updates: Partial<Candidate>): Promise<void> {
     try {
-      await updateDoc(doc(db, 'candidates', id), updates as any);
+      const cleanUpdates = sanitizeForFirestore(updates);
+      await updateDoc(doc(db, 'candidates', id), cleanUpdates as any);
     } catch (err) {
       console.error('Error updating candidate:', err);
       throw err;

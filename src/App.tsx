@@ -30,6 +30,7 @@ import ReadingSection from './components/ReadingSection';
 import WritingSection from './components/WritingSection';
 import AdminPanel from './components/AdminPanel';
 import StudentPortal from './components/StudentPortal';
+import { DocumentReaderModal } from './components/DocumentReaderModal';
 
 // Firebase Services
 import { candidateService } from './services/candidateService';
@@ -204,6 +205,8 @@ export default function App() {
   // Modals / Overlays
   const [showCheatWarning, setShowCheatWarning] = useState(false);
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+  const [showConfirmExit, setShowConfirmExit] = useState(false);
+  const [previewMaterial, setPreviewMaterial] = useState<any | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -341,9 +344,7 @@ export default function App() {
       setTimeLeftSeconds(remaining > 0 ? remaining : 0);
       setTabSwitches(data.candidate.tabSwitches || 0);
 
-      if (data.candidate.submittedAt) {
-        setTestCompleted(true);
-      }
+      setTestCompleted(Boolean(data.candidate.submittedAt));
 
       setLoading(false);
       return { success: true };
@@ -378,9 +379,7 @@ export default function App() {
         setTimeLeftSeconds(remaining > 0 ? remaining : 0);
         setTabSwitches(data.candidate.tabSwitches || 0);
 
-        if (data.candidate.submittedAt) {
-          setTestCompleted(true);
-        }
+        setTestCompleted(Boolean(data.candidate.submittedAt));
       }
     } catch (e) {
       console.error('Session resume failure:', e);
@@ -440,14 +439,20 @@ export default function App() {
 
     try {
       await candidateService.submitTest(candidate.id);
+      const nowIso = new Date().toISOString();
+      const updatedCand = { ...candidate, submittedAt: nowIso };
+      setCandidate(updatedCand);
       setTestCompleted(true);
-      localStorage.removeItem('candidate_session');
+      localStorage.setItem('candidate_session', JSON.stringify(updatedCand));
       localStorage.removeItem('audio_l1_state');
       localStorage.removeItem('audio_l2_state');
     } catch (err) {
       console.warn('Network issue during submit, finishing with local resilient sync:', err);
+      const nowIso = new Date().toISOString();
+      const updatedCand = { ...candidate, submittedAt: nowIso };
+      setCandidate(updatedCand);
       setTestCompleted(true);
-      localStorage.removeItem('candidate_session');
+      localStorage.setItem('candidate_session', JSON.stringify(updatedCand));
       localStorage.removeItem('audio_l1_state');
       localStorage.removeItem('audio_l2_state');
     } finally {
@@ -459,38 +464,46 @@ export default function App() {
     if (!candidate) return;
     try {
       await candidateService.submitTest(candidate.id);
+      const nowIso = new Date().toISOString();
+      const updatedCand = { ...candidate, submittedAt: nowIso };
+      setCandidate(updatedCand);
       setTestCompleted(true);
-      localStorage.removeItem('candidate_session');
+      localStorage.setItem('candidate_session', JSON.stringify(updatedCand));
     } catch (e) {
       console.error('Auto submit error:', e);
       setTestCompleted(true);
     }
   };
 
-  const handleManualExit = async () => {
+  const handleManualExit = () => {
     if (!candidate) return;
-    if (confirm(`${languageService.t('confirm_exit_title')}\n\n${languageService.t('confirm_exit_desc')}`)) {
-      setLoading(true);
-      try {
-        await candidateService.leaveRoom(candidate.id);
-        localStorage.removeItem('candidate_session');
-        localStorage.removeItem('audio_l1_state');
-        localStorage.removeItem('audio_l2_state');
-        setCandidate(null);
-        setAnswers({});
-        setSkippedQuestions({});
-        setTestCompleted(false);
-        setCurrentSection('listening');
-      } catch (err) {
-        console.error('Error leaving room:', err);
-        alert('Lỗi khi rời phòng thi. Vui lòng thử lại.');
-      } finally {
-        setLoading(false);
-      }
+    setShowConfirmExit(true);
+  };
+
+  const handleExecuteExitRoom = async () => {
+    if (!candidate) return;
+    setLoading(true);
+    try {
+      await candidateService.leaveRoom(candidate.id);
+    } catch (err) {
+      console.warn('Error marking leaveRoom in database, proceeding with local exit:', err);
+    } finally {
+      localStorage.removeItem('candidate_session');
+      localStorage.removeItem('audio_l1_state');
+      localStorage.removeItem('audio_l2_state');
+      setCandidate(null);
+      setAnswers({});
+      setSkippedQuestions({});
+      setTestCompleted(false);
+      setInTestMode(false);
+      setCurrentSection('listening');
+      setShowConfirmExit(false);
+      setLoading(false);
     }
   };
 
-  // Dynamic question resolving based on current activeExam with fallback to static constants
+  // Dynamic question resolving based on current activeExam:
+  // For default-exam, fallback to built-in sample data. For manual/custom exams, ONLY use questions provided by admin!
   const isDefaultExam = !activeExam || activeExam.id === 'default-exam';
   const listeningPart1 = activeExam?.questions?.listeningPart1 || (isDefaultExam ? LISTENING_PART_1 : []);
   const listeningPart2 = activeExam?.questions?.listeningPart2 || (isDefaultExam ? LISTENING_PART_2 : []);
@@ -501,6 +514,39 @@ export default function App() {
   const readingPassage = activeExam?.questions?.readingPassage || (isDefaultExam ? READING_PASSAGE : { title: "", text: "", questionsPartA: [], questionsPartB: [] });
   const writingQuestions = activeExam?.questions?.writingQuestions || (isDefaultExam ? WRITING_QUESTIONS : []);
 
+  // Compute which sections actually have questions/content added by admin
+  const hasListening = listeningPart1.length > 0 || listeningPart2.length > 0;
+  const hasSpeaking = speakingQuestions.length > 0 || Boolean(speakingReadAloud?.text && speakingReadAloud.text.trim().length > 0);
+  const hasGrammar = grammarQuestions.length > 0;
+  const hasVocabulary = vocabularyQuestions.length > 0;
+  const hasReading = (readingPassage?.questionsPartA?.length || 0) > 0 || (readingPassage?.questionsPartB?.length || 0) > 0 || Boolean(readingPassage?.text && readingPassage.text.trim().length > 0);
+  const hasWriting = writingQuestions.length > 0;
+
+  const ALL_POSSIBLE_SECTIONS = [
+    { id: 'listening', label: 'Listening', hasContent: hasListening },
+    { id: 'speaking', label: 'Speaking', hasContent: hasSpeaking },
+    { id: 'grammar', label: 'Grammar', hasContent: hasGrammar },
+    { id: 'vocabulary', label: 'Vocabulary', hasContent: hasVocabulary },
+    { id: 'reading', label: 'Reading', hasContent: hasReading },
+    { id: 'writing', label: 'Writing', hasContent: hasWriting }
+  ];
+
+  // SECTIONS_LIST only includes sections with content (or all if default exam)
+  const SECTIONS_LIST = ALL_POSSIBLE_SECTIONS
+    .filter(s => isDefaultExam || s.hasContent)
+    .map((s, idx) => ({
+      id: s.id,
+      label: `${idx + 1}. ${s.label}`
+    }));
+
+  // Automatically ensure currentSection points to an available section
+  useEffect(() => {
+    if (SECTIONS_LIST.length > 0 && !SECTIONS_LIST.some(s => s.id === currentSection)) {
+      setCurrentSection(SECTIONS_LIST[0].id);
+      setCurrentQuestionId('');
+    }
+  }, [activeExam?.id, SECTIONS_LIST.length, currentSection]);
+
   // Define active question bank for the side navigator palette
   const getActiveSectionQuestions = () => {
     switch (currentSection) {
@@ -509,11 +555,16 @@ export default function App() {
           ...listeningPart1.map((q: any, idx: number) => ({ id: q.id, label: `L${idx + 1}` })),
           ...listeningPart2.map((q: any, idx: number) => ({ id: q.id, label: `L${idx + 1 + listeningPart1.length}` }))
         ];
-      case 'speaking':
-        return [
-          { id: 'speaking_p1', label: 'S1' },
-          ...speakingQuestions.map((q: any, idx: number) => ({ id: `speaking_p2_q${idx + 1}`, label: `S2-Q${idx + 1}` }))
-        ];
+      case 'speaking': {
+        const questionsList: { id: string; label: string }[] = [];
+        if (speakingReadAloud?.text && speakingReadAloud.text.trim().length > 0) {
+          questionsList.push({ id: 'speaking_p1', label: 'S1' });
+        }
+        speakingQuestions.forEach((q: any, idx: number) => {
+          questionsList.push({ id: `speaking_p2_q${idx + 1}`, label: `S2-Q${idx + 1}` });
+        });
+        return questionsList;
+      }
       case 'grammar':
         return grammarQuestions.map((q: any, idx: number) => ({ id: q.id, label: `G${idx + 1}` }));
       case 'vocabulary':
@@ -529,16 +580,6 @@ export default function App() {
         return [];
     }
   };
-
-  // Section List mapping
-  const SECTIONS_LIST = [
-    { id: 'listening', label: '1. Listening' },
-    { id: 'speaking', label: '2. Speaking' },
-    { id: 'grammar', label: '3. Grammar' },
-    { id: 'vocabulary', label: '4. Vocabulary' },
-    { id: 'reading', label: '5. Reading' },
-    { id: 'writing', label: '6. Writing' }
-  ];
 
   const DEFAULT_AUDIO_1 = 'https://storage.m3cdn.xyz/audio/1782652891560-hotel.mp3';
   const DEFAULT_AUDIO_2 = 'https://storage.m3cdn.xyz/audio/section%201%20rented%20properties.mp3';
@@ -641,16 +682,55 @@ export default function App() {
 
   const handleSelectExam = async (examId: string) => {
     const chosen = exams.find((e) => e.id === examId);
-    if (chosen) {
-      setActiveExam(chosen);
-      if (candidate?.id) {
-        try {
-          await candidateService.updateCandidate(candidate.id, { examId: chosen.id });
-          setCandidate((prev: any) => ({ ...prev, examId: chosen.id }));
-        } catch (e) {
-          console.warn('Failed to update candidate examId:', e);
-        }
+    if (!chosen) return;
+
+    setActiveExam(chosen);
+    setCurrentSection('listening');
+    setCurrentQuestionId('');
+
+    if (candidate?.fullName && candidate?.phone) {
+      setLoading(true);
+      try {
+        // Register or retrieve session specifically for (candidate.phone, chosen.id)
+        const sessionData = await candidateService.registerCandidate(
+          candidate.fullName,
+          candidate.phone,
+          chosen.id
+        );
+
+        setCandidate(sessionData.candidate);
+        localStorage.setItem('candidate_session', JSON.stringify(sessionData.candidate));
+
+        // Restore or reset answers
+        const restored = sessionData.restoredAnswers || {};
+        setAnswers(restored);
+
+        const skips: Record<string, boolean> = {};
+        Object.entries(restored).forEach(([qId, val]) => {
+          if (val === '__SKIPPED__') skips[qId] = true;
+        });
+        setSkippedQuestions(skips);
+
+        // Update timer & tab switches
+        const elapsed = sessionData.candidate.durationSeconds || 0;
+        const totalSecs = (chosen.durationMinutes || 45) * 60;
+        const remaining = totalSecs - elapsed;
+        setTimeLeftSeconds(remaining > 0 ? remaining : 0);
+        setTabSwitches(sessionData.candidate.tabSwitches || 0);
+
+        // Crucial: Set testCompleted according to THIS specific exam's submission status!
+        setTestCompleted(Boolean(sessionData.candidate.submittedAt));
+      } catch (e) {
+        console.warn('Failed to switch candidate exam session:', e);
+      } finally {
+        setLoading(false);
       }
+    } else {
+      const totalSecs = (chosen.durationMinutes || 45) * 60;
+      setTimeLeftSeconds(totalSecs);
+      setTestCompleted(false);
+      setAnswers({});
+      setSkippedQuestions({});
     }
   };
 
@@ -838,7 +918,7 @@ export default function App() {
                     Giáo viên đã chia sẻ các tài liệu ôn luyện độc quyền dưới đây dành riêng cho học sinh đã tham gia thi thử thành công. Hãy click để xem và tải về.
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
                     {materials.map((m) => {
                       let IconComponent = BookOpen;
                       if (m.type === 'document' || m.type === 'docx' || m.type === 'pdf') IconComponent = FileText;
@@ -846,25 +926,24 @@ export default function App() {
                       else if (m.type === 'link') IconComponent = ExternalLink;
 
                       return (
-                        <a
+                        <button
                           key={m.id}
-                          href={m.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="group flex gap-3 p-3.5 bg-slate-50 dark:bg-slate-800/50 hover:bg-indigo-50/40 dark:hover:bg-slate-800 border border-slate-150 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-500 rounded-2xl transition-all duration-150 cursor-pointer"
+                          type="button"
+                          onClick={() => setPreviewMaterial(m)}
+                          className="group flex gap-3 p-3.5 bg-slate-50 dark:bg-slate-800/50 hover:bg-indigo-50/40 dark:hover:bg-slate-800 border border-slate-150 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-500 rounded-2xl transition-all duration-150 cursor-pointer text-left w-full"
                         >
                           <div className="flex-none p-2 bg-indigo-50 dark:bg-slate-700 rounded-xl text-indigo-900 dark:text-indigo-300 group-hover:bg-indigo-100/70 transition-colors h-10 w-10 flex items-center justify-center">
                             <IconComponent className="w-4 h-4" />
                           </div>
-                          <div className="space-y-0.5 overflow-hidden text-left">
+                          <div className="space-y-0.5 overflow-hidden text-left flex-grow min-w-0">
                             <h4 className="text-[11px] font-black text-slate-800 dark:text-slate-200 uppercase tracking-wide line-clamp-1 group-hover:text-indigo-900 dark:group-hover:text-indigo-300 transition-colors">
                               {m.title}
                             </h4>
                             <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                              {m.description || 'Tài liệu hướng dẫn bổ trợ.'}
+                              {m.description || 'Tài liệu hướng dẫn bổ trợ (Click để xem trực tiếp).'}
                             </p>
                           </div>
-                        </a>
+                        </button>
                       );
                     })}
                   </div>
@@ -927,6 +1006,7 @@ export default function App() {
         }}
         sectionsList={SECTIONS_LIST}
         onBackToPortal={() => setInTestMode(false)}
+        onExitRoom={handleManualExit}
       />
 
       {/* Warning Banner below Header */}
@@ -1157,6 +1237,77 @@ export default function App() {
           </motion.div>
         </div>
       )}
+
+      {/* D. CONFIRM EXIT ROOM MODAL */}
+      {showConfirmExit && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-[10000] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl border border-slate-200"
+          >
+            <div className="flex items-center gap-3 text-rose-600 border-b border-slate-100 pb-4">
+              <div className="p-3 bg-rose-50 rounded-2xl text-rose-600">
+                <AlertOctagon className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black uppercase text-slate-900">
+                  {t('confirm_exit_title')}
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Xác nhận rời khỏi phòng thi trực tuyến
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 leading-relaxed font-medium">
+              <p className="bg-amber-50 border border-amber-200 p-4 rounded-2xl text-amber-900">
+                ⚠️ <strong>Lưu ý:</strong> {t('confirm_exit_desc')}
+              </p>
+              <p className="text-slate-500">
+                Nếu bạn chỉ muốn tạm dừng để xem tài liệu học tập hoặc chọn đổi sang bài thi khác, hãy chọn <strong>"Quay lại Bảng điều khiển"</strong> để không bị hủy phiên làm bài.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowConfirmExit(false)}
+                className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                {lang === 'vi' ? 'Hủy bỏ (Làm tiếp)' : 'Cancel (Resume)'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConfirmExit(false);
+                  setInTestMode(false);
+                }}
+                className="px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-indigo-200"
+              >
+                {lang === 'vi' ? 'Quay lại Bảng điều khiển' : 'Back to Portal'}
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteExitRoom}
+                disabled={loading}
+                className="px-5 py-3 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white font-bold rounded-xl text-xs transition-colors shadow-sm cursor-pointer"
+              >
+                {loading
+                  ? (lang === 'vi' ? 'Đang xử lý...' : 'Leaving...')
+                  : (lang === 'vi' ? 'Rời phòng thi & Đăng xuất' : 'Leave Room & Log Out')}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* DOCUMENT READER MODAL FOR ALL IN-APP DOCUMENTS */}
+      <DocumentReaderModal
+        isOpen={Boolean(previewMaterial)}
+        material={previewMaterial}
+        onClose={() => setPreviewMaterial(null)}
+      />
 
       {/* Dynamic Floating Theme Toggle button */}
       <button

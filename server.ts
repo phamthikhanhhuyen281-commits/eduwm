@@ -49,6 +49,14 @@ function flattenAnswers(nestedAnswers: any): Record<string, string> {
       if (typeof v === 'string') flat[k] = v;
     });
   }
+  if (nestedAnswers.speakingPart1?.audioPath) {
+    flat['speaking_p1'] = nestedAnswers.speakingPart1.audioPath;
+  }
+  if (nestedAnswers.speakingPart2) {
+    if (nestedAnswers.speakingPart2.sp_1_audioPath) flat['speaking_p2_q1'] = nestedAnswers.speakingPart2.sp_1_audioPath;
+    if (nestedAnswers.speakingPart2.sp_2_audioPath) flat['speaking_p2_q2'] = nestedAnswers.speakingPart2.sp_2_audioPath;
+    if (nestedAnswers.speakingPart2.sp_3_audioPath) flat['speaking_p2_q3'] = nestedAnswers.speakingPart2.sp_3_audioPath;
+  }
   return flat;
 }
 
@@ -62,6 +70,8 @@ function nestAnswers(flatAnswers: Record<string, string>): any {
     readingPartA: {},
     readingPartB: {},
     writing: {},
+    speakingPart1: {},
+    speakingPart2: {},
   };
   
   if (!flatAnswers) return nested;
@@ -69,7 +79,15 @@ function nestAnswers(flatAnswers: Record<string, string>): any {
   Object.entries(flatAnswers).forEach(([k, v]) => {
     const activeKey = k.startsWith('__NOTE__') ? k.replace('__NOTE__', '') : k;
     
-    if (activeKey.startsWith('l1_')) {
+    if (activeKey === 'speaking_p1') {
+      nested.speakingPart1 = { audioPath: v };
+    } else if (activeKey === 'speaking_p2_q1') {
+      nested.speakingPart2.sp_1_audioPath = v;
+    } else if (activeKey === 'speaking_p2_q2') {
+      nested.speakingPart2.sp_2_audioPath = v;
+    } else if (activeKey === 'speaking_p2_q3') {
+      nested.speakingPart2.sp_3_audioPath = v;
+    } else if (activeKey.startsWith('l1_')) {
       nested.listeningPart1[k] = v;
     } else if (activeKey.startsWith('l2_')) {
       nested.listeningPart2[k] = v;
@@ -198,6 +216,24 @@ async function startServer() {
     }
   });
 
+  // API Route: Record audio playback (1-time lock)
+  app.post('/api/candidates/audio-played', (req, res) => {
+    try {
+      const { id, audioType } = req.body;
+      if (!id || !audioType) {
+        return res.status(400).json({ error: 'Thiếu ID hoặc loại audio.' });
+      }
+      const candidate = db.getCandidateById(id);
+      if (!candidate) {
+        return res.status(200).json({ success: true, message: 'Candidate not found in local db, handled by Firestore' });
+      }
+      const updated = db.recordAudioPlayed(id, audioType);
+      return res.json({ success: true, candidate: updated });
+    } catch (error: any) {
+      return res.status(200).json({ success: false, message: error.message });
+    }
+  });
+
   // API Route: Upload Speaking Audio recording (Part 1 or Part 2)
   app.post('/api/candidates/upload-audio', (req, res) => {
     try {
@@ -209,20 +245,28 @@ async function startServer() {
       // Save audio to disk
       const relativePath = db.saveAudio(id, part, audioData);
 
-      // Update candidate database structure
-      let answersUpdate: any = {};
-      if (part === 'speaking_p1') {
-        answersUpdate.speakingPart1 = { audioPath: relativePath };
-      } else if (part === 'speaking_p2_q1') {
-        answersUpdate.speakingPart2 = { sp_1_audioPath: relativePath };
-      } else if (part === 'speaking_p2_q2') {
-        answersUpdate.speakingPart2 = { sp_2_audioPath: relativePath };
-      } else if (part === 'speaking_p2_q3') {
-        answersUpdate.speakingPart2 = { sp_3_audioPath: relativePath };
+      // Update candidate in local DB if candidate exists
+      let updated: any = null;
+      try {
+        let answersUpdate: any = {};
+        if (part === 'speaking_p1') {
+          answersUpdate.speakingPart1 = { audioPath: relativePath };
+        } else if (part === 'speaking_p2_q1') {
+          answersUpdate.speakingPart2 = { sp_1_audioPath: relativePath };
+        } else if (part === 'speaking_p2_q2') {
+          answersUpdate.speakingPart2 = { sp_2_audioPath: relativePath };
+        } else if (part === 'speaking_p2_q3') {
+          answersUpdate.speakingPart2 = { sp_3_audioPath: relativePath };
+        }
+
+        if (db.getCandidateById(id)) {
+          updated = db.updateAnswers(id, answersUpdate);
+        }
+      } catch (localDbErr) {
+        console.warn('Local DB sync skipped (candidate is managed by Firestore):', localDbErr);
       }
 
-      const updated = db.updateAnswers(id, answersUpdate);
-      return res.json({ candidate: updated, audioPath: relativePath });
+      return res.json({ success: true, candidate: updated, audioPath: relativePath });
     } catch (error: any) {
       console.error('Audio upload error:', error);
       return res.status(500).json({ error: error.message });
@@ -232,26 +276,32 @@ async function startServer() {
   // API Route: Evaluate Speaking Part 1 using Gemini AI
   app.post('/api/speaking/evaluate', async (req, res) => {
     try {
-      const { id, audioPath } = req.body;
+      const { id, audioPath, referenceText: clientRefText } = req.body;
       if (!id || !audioPath) {
         return res.status(400).json({ error: 'Thiếu thông tin phân tích Speaking.' });
       }
 
       const candidate = db.getCandidateById(id);
       const exam = candidate ? db.getExamById(candidate.examId) : undefined;
-      const referenceText = exam?.questions?.speakingReadAloud?.text;
+      const referenceText = clientRefText || exam?.questions?.speakingReadAloud?.text;
 
       // Run real multi-modal Gemini evaluation
       const evaluation = await evaluateSpeakingAudio(audioPath, referenceText);
 
-      // Save evaluation results back to candidate DB
-      const answersUpdate = {
-        speakingPart1: {
-          audioPath,
-          aiEvaluation: evaluation
+      // Save evaluation results back to candidate DB if exists
+      if (candidate) {
+        try {
+          const answersUpdate = {
+            speakingPart1: {
+              audioPath,
+              aiEvaluation: evaluation
+            }
+          };
+          db.updateAnswers(id, answersUpdate);
+        } catch (e) {
+          console.warn('Local candidate update with speaking evaluation skipped:', e);
         }
-      };
-      db.updateAnswers(id, answersUpdate);
+      }
 
       return res.json({ success: true, evaluation });
     } catch (error: any) {

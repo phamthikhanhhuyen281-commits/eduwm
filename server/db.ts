@@ -31,6 +31,14 @@ export interface Candidate {
   logs: CandidateLog[];
   writingScore: number; // additional manual score
   writingComment: string; // teacher feedback
+  audioPlayback?: {
+    audio1Played?: boolean;
+    audio1PlayedAt?: string;
+    audio2Played?: boolean;
+    audio2PlayedAt?: string;
+  };
+  audio1Played?: boolean;
+  audio2Played?: boolean;
   answers: {
     listeningPart1: Record<string, string>; // { l1_1: 'A', ... }
     listeningPart2: Record<string, string>; // { l2_1: 'May 5th', ... }
@@ -447,6 +455,33 @@ class DatabaseManager {
     return candidate;
   }
 
+  public recordAudioPlayed(id: string, audioType: 'audio1' | 'audio2'): Candidate {
+    const candidate = this.getCandidateById(id);
+    if (!candidate) {
+      throw new Error('Không tìm thấy thông tin thí sinh.');
+    }
+
+    if (!candidate.audioPlayback) {
+      candidate.audioPlayback = {};
+    }
+
+    const now = new Date().toISOString();
+    if (audioType === 'audio1') {
+      candidate.audioPlayback.audio1Played = true;
+      candidate.audioPlayback.audio1PlayedAt = now;
+      candidate.audio1Played = true;
+      candidate.logs.push({ timestamp: now, action: 'Đã bắt đầu nghe Audio Phần 1 (Khóa bài nghe - chỉ được nghe 1 lần duy nhất).' });
+    } else if (audioType === 'audio2') {
+      candidate.audioPlayback.audio2Played = true;
+      candidate.audioPlayback.audio2PlayedAt = now;
+      candidate.audio2Played = true;
+      candidate.logs.push({ timestamp: now, action: 'Đã bắt đầu nghe Audio Phần 2 (Khóa bài nghe - chỉ được nghe 1 lần duy nhất).' });
+    }
+
+    this.save();
+    return candidate;
+  }
+
   public saveAudio(candidateId: string, part: string, audioBase64: string): string {
     const matches = audioBase64.match(/^data:(.+);base64,(.+)$/);
     let base64Data = audioBase64;
@@ -454,14 +489,23 @@ class DatabaseManager {
 
     if (matches && matches.length === 3) {
       base64Data = matches[2];
-      const mime = matches[1];
+      const mime = matches[1].toLowerCase();
       if (mime.includes('wav')) ext = 'wav';
-      else if (mime.includes('mp3')) ext = 'mp3';
+      else if (mime.includes('mp3') || mime.includes('mpeg')) ext = 'mp3';
       else if (mime.includes('ogg')) ext = 'ogg';
+      else if (mime.includes('mp4')) ext = 'mp4';
+      else if (mime.includes('m4a')) ext = 'm4a';
+      else if (mime.includes('aac')) ext = 'aac';
+    }
+
+    if (!fs.existsSync(RECORDINGS_DIR)) {
+      fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
     }
 
     const buffer = Buffer.from(base64Data, 'base64');
-    const fileName = `${candidateId}_${part}.${ext}`;
+    const safeCandidateId = candidateId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const safePart = part.replace(/[^a-zA-Z0-9_-]/g, '');
+    const fileName = `${safeCandidateId}_${safePart}_${Date.now()}.${ext}`;
     const filePath = path.join(RECORDINGS_DIR, fileName);
 
     fs.writeFileSync(filePath, buffer);

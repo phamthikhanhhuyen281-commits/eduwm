@@ -57,7 +57,8 @@ export async function evaluateSpeakingAudio(
       throw new Error(`Could not fetch audio URL: ${err.message}`);
     }
   } else {
-    const fullPath = path.join(process.cwd(), audioPath);
+    const cleanPath = audioPath.replace(/^\/+/, '');
+    const fullPath = path.join(process.cwd(), cleanPath);
     if (!fs.existsSync(fullPath)) {
       throw new Error(`Không tìm thấy file ghi âm tại đường dẫn: ${audioPath}`);
     }

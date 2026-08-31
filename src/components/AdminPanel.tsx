@@ -33,7 +33,13 @@ import {
   Activity,
   Globe,
   Share2,
-  Eye
+  Eye,
+  Upload,
+  Headphones,
+  FileCode,
+  Image as ImageIcon,
+  Copy,
+  FileCheck
 } from 'lucide-react';
 import { WRITING_QUESTIONS, LISTENING_PART_1, LISTENING_PART_2, GRAMMAR_QUESTIONS, VOCABULARY_QUESTIONS, READING_PASSAGE } from '../questions';
 
@@ -189,6 +195,13 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   const [newMaterialTitle, setNewMaterialTitle] = useState('');
   const [newMaterialDesc, setNewMaterialDesc] = useState('');
   const [newMaterialUrl, setNewMaterialUrl] = useState('');
+  const [newMaterialType, setNewMaterialType] = useState<'pdf' | 'docx' | 'image' | 'video' | 'audio' | 'link' | 'document' | 'other'>('pdf');
+  const [materialSourceMode, setMaterialSourceMode] = useState<'upload' | 'link'>('upload');
+  const [selectedMaterialFile, setSelectedMaterialFile] = useState<File | null>(null);
+  const [materialFilterType, setMaterialFilterType] = useState<string>('all');
+  const [materialSearchTerm, setMaterialSearchTerm] = useState<string>('');
+  const [materialSubmitting, setMaterialSubmitting] = useState(false);
+  const [adminPreviewItem, setAdminPreviewItem] = useState<any | null>(null);
 
   // Settings State
   const [logoUrl, setLogoUrl] = useState('');
@@ -216,8 +229,6 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
-  const [newMaterialType, setNewMaterialType] = useState('document'); // document | link | video | other
-  const [materialSubmitting, setMaterialSubmitting] = useState(false);
 
   // Exam management states
   const [exams, setExams] = useState<any[]>([]);
@@ -1359,45 +1370,78 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMaterialTitle.trim()) return;
+    if (!newMaterialTitle.trim()) {
+      showAlert('Lỗi', 'Vui lòng nhập Tiêu đề tài liệu.', 'error');
+      return;
+    }
+
+    if (materialSourceMode === 'upload' && !selectedMaterialFile && !newMaterialUrl.trim()) {
+      showAlert('Lỗi', 'Vui lòng chọn tệp tin từ máy tính hoặc nhập đường link.', 'error');
+      return;
+    }
+
+    if (materialSourceMode === 'link' && !newMaterialUrl.trim()) {
+      showAlert('Lỗi', 'Vui lòng nhập đường dẫn liên kết (URL).', 'error');
+      return;
+    }
 
     setMaterialSubmitting(true);
     try {
-      const id = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+      let finalUrl = newMaterialUrl.trim();
+      let detectedType = newMaterialType;
+      let fileName = selectedMaterialFile?.name || '';
+      let fileSize = selectedMaterialFile?.size || 0;
+
+      // If uploading direct file
+      if (materialSourceMode === 'upload' && selectedMaterialFile) {
+        finalUrl = await storageService.uploadFile(selectedMaterialFile, 'materials');
+        
+        // Auto-detect type from file extension
+        const ext = selectedMaterialFile.name.split('.').pop()?.toLowerCase() || '';
+        if (ext === 'pdf') detectedType = 'pdf';
+        else if (ext === 'doc' || ext === 'docx') detectedType = 'docx';
+        else if (['mp4', 'webm', 'mov', 'm4v', 'avi'].includes(ext)) detectedType = 'video';
+        else if (['mp3', 'wav', 'm4a', 'ogg', 'aac'].includes(ext)) detectedType = 'audio';
+        else if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext)) detectedType = 'image';
+        else detectedType = 'document';
+      } else if (materialSourceMode === 'link') {
+        const urlLower = finalUrl.toLowerCase();
+        if (urlLower.includes('youtube.com') || urlLower.includes('youtu.be')) detectedType = 'video';
+        else if (urlLower.endsWith('.pdf')) detectedType = 'pdf';
+        else if (urlLower.endsWith('.doc') || urlLower.endsWith('.docx')) detectedType = 'docx';
+        else if (urlLower.endsWith('.mp3') || urlLower.endsWith('.wav')) detectedType = 'audio';
+        else if (urlLower.endsWith('.png') || urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg')) detectedType = 'image';
+      }
+
+      const id = 'mat_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
       const newMat = {
         id,
         title: newMaterialTitle.trim(),
         description: newMaterialDesc.trim(),
-        url: newMaterialUrl.trim(),
-        type: newMaterialType,
+        url: finalUrl,
+        type: detectedType,
+        fileName,
+        fileSize,
+        uploadedBy: teacherName || 'Admin',
         createdAt: new Date().toISOString()
       };
 
-      await materialService.saveMaterial(newMat);
+      await materialService.saveMaterial(newMat as any);
 
+      // Reset form
       setNewMaterialTitle('');
       setNewMaterialDesc('');
       setNewMaterialUrl('');
-      setNewMaterialType('document');
+      setSelectedMaterialFile(null);
+      setNewMaterialType('pdf');
       
       // Refresh list
       await fetchMaterials();
       
-      // Show alert
-      setAlertConfig({
-        show: true,
-        title: 'Thành công',
-        message: 'Tài liệu ôn tập đã được thêm thành công.',
-        type: 'success'
-      });
+      showAlert('Thành công', 'Tài liệu ôn tập đã được thêm thành công!', 'success');
     } catch (e: any) {
       console.error(e);
-      setAlertConfig({
-        show: true,
-        title: 'Lỗi',
-        message: e.message || 'Có lỗi xảy ra khi thêm tài liệu.',
-        type: 'error'
-      });
+      showAlert('Lỗi', e.message || 'Có lỗi xảy ra khi lưu tài liệu.', 'error');
     } finally {
       setMaterialSubmitting(false);
     }
@@ -1540,136 +1584,328 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   }
 
   const renderMaterialsManager = () => {
+    // Filter materials for admin view
+    const filteredAdminMaterials = materials.filter((m) => {
+      const matchSearch =
+        m.title.toLowerCase().includes(materialSearchTerm.toLowerCase()) ||
+        (m.description && m.description.toLowerCase().includes(materialSearchTerm.toLowerCase())) ||
+        (m.fileName && m.fileName.toLowerCase().includes(materialSearchTerm.toLowerCase()));
+
+      if (!matchSearch) return false;
+      if (materialFilterType === 'all') return true;
+      if (materialFilterType === 'pdf') return m.type === 'pdf' || m.url.toLowerCase().includes('.pdf');
+      if (materialFilterType === 'docx') return m.type === 'docx' || m.url.toLowerCase().includes('.doc') || m.url.toLowerCase().includes('.docx');
+      if (materialFilterType === 'video') return m.type === 'video' || m.url.toLowerCase().includes('youtu') || m.url.toLowerCase().includes('.mp4');
+      if (materialFilterType === 'audio') return m.type === 'audio' || m.url.toLowerCase().includes('.mp3') || m.url.toLowerCase().includes('.wav');
+      if (materialFilterType === 'image') return m.type === 'image' || m.url.toLowerCase().includes('.png') || m.url.toLowerCase().includes('.jpg');
+      if (materialFilterType === 'link') return m.type === 'link';
+      return true;
+    });
+
+    const getIconForType = (type: string, url: string) => {
+      const u = url.toLowerCase();
+      if (type === 'pdf' || u.endsWith('.pdf')) return <FileText className="w-5 h-5 text-red-600" />;
+      if (type === 'docx' || u.endsWith('.docx') || u.endsWith('.doc')) return <FileCode className="w-5 h-5 text-blue-600" />;
+      if (type === 'video' || u.includes('youtu') || u.endsWith('.mp4')) return <Video className="w-5 h-5 text-purple-600" />;
+      if (type === 'audio' || u.endsWith('.mp3') || u.endsWith('.wav')) return <Headphones className="w-5 h-5 text-emerald-600" />;
+      if (type === 'image' || u.endsWith('.png') || u.endsWith('.jpg')) return <ImageIcon className="w-5 h-5 text-amber-600" />;
+      if (type === 'link') return <ExternalLink className="w-5 h-5 text-cyan-600" />;
+      return <BookOpen className="w-5 h-5 text-indigo-600" />;
+    };
+
     return (
       <div className="space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
           <div>
-            <h2 className="text-xl font-extrabold text-indigo-950 uppercase tracking-tight">KHO TÀI LIỆU HỌC TẬP & ÔN TẬP</h2>
-            <p className="text-xs text-slate-500">Thêm, bớt các tài liệu ôn luyện bổ trợ hiển thị công khai ở màn hình chờ làm bài của học sinh.</p>
+            <h2 className="text-xl font-extrabold text-indigo-950 uppercase tracking-tight">KHO TÀI LIỆU HỌC TẬP & BÀI GIẢNG</h2>
+            <p className="text-xs text-slate-500">
+              Tải trực tiếp file PDF, Word (.docx), Video bài giảng, Audio bài nghe, Hình ảnh hoặc Liên kết web để học sinh truy cập học tập.
+            </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Column 1: Add New Material Form */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm h-fit">
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
             <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-3 mb-4 flex items-center gap-2">
-              <Plus className="w-4 h-4 text-indigo-900" /> Thêm tài liệu mới
+              <Plus className="w-4 h-4 text-indigo-900" /> Tải lên / Thêm tài liệu mới
             </h3>
+
+            {/* Source Mode Switcher */}
+            <div className="flex rounded-2xl bg-slate-100 p-1 mb-4">
+              <button
+                type="button"
+                onClick={() => setMaterialSourceMode('upload')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  materialSourceMode === 'upload' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" /> Tải tệp tin trực tiếp
+              </button>
+              <button
+                type="button"
+                onClick={() => setMaterialSourceMode('link')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  materialSourceMode === 'link' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ExternalLink className="w-3.5 h-3.5" /> Nhập liên kết ngoài
+              </button>
+            </div>
+
             <form onSubmit={handleAddMaterial} className="space-y-4">
+              {/* File Picker if Upload Mode */}
+              {materialSourceMode === 'upload' && (
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase">
+                    Chọn tệp tin (PDF, Word, MP4, MP3, Ảnh...)
+                  </label>
+                  <div className="relative border-2 border-dashed border-slate-200 hover:border-indigo-500 rounded-2xl p-4 text-center bg-slate-50/60 hover:bg-slate-50 transition-colors">
+                    <input
+                      type="file"
+                      id="admin-material-file-input"
+                      accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.webm,.mov,.mp3,.wav,.m4a,.png,.jpg,.jpeg,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setSelectedMaterialFile(file);
+                          if (!newMaterialTitle) {
+                            // Auto fill title from file name
+                            const nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                            setNewMaterialTitle(nameWithoutExt);
+                          }
+                          // Auto detect type
+                          const ext = file.name.split('.').pop()?.toLowerCase() || '';
+                          if (ext === 'pdf') setNewMaterialType('pdf');
+                          else if (ext === 'doc' || ext === 'docx') setNewMaterialType('docx');
+                          else if (['mp4', 'webm', 'mov'].includes(ext)) setNewMaterialType('video');
+                          else if (['mp3', 'wav', 'm4a'].includes(ext)) setNewMaterialType('audio');
+                          else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) setNewMaterialType('image');
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    {selectedMaterialFile ? (
+                      <div className="space-y-1">
+                        <div className="w-10 h-10 bg-indigo-100 text-indigo-900 rounded-xl flex items-center justify-center mx-auto">
+                          <FileCheck className="w-5 h-5" />
+                        </div>
+                        <div className="text-xs font-bold text-slate-800 truncate max-w-xs mx-auto">
+                          {selectedMaterialFile.name}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {(selectedMaterialFile.size / (1024 * 1024)).toFixed(2)} MB
+                        </div>
+                        <div className="text-[10px] text-indigo-600 font-semibold pt-1">
+                          Click để chọn file khác
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <Upload className="w-8 h-8 text-slate-400 mx-auto" />
+                        <div className="text-xs font-bold text-slate-700">Kéo thả hoặc Nhấp để chọn file</div>
+                        <div className="text-[10px] text-slate-400">
+                          Hỗ trợ .pdf, .docx, .doc, .mp4 (video), .mp3 (audio), .jpg, .png...
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* URL Input if Link Mode */}
+              {materialSourceMode === 'link' && (
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase">Đường dẫn liên kết (URL)</label>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://youtube.com/watch?v=... hoặc https://drive.google.com/..."
+                    value={newMaterialUrl}
+                    onChange={(e) => {
+                      setNewMaterialUrl(e.target.value);
+                      if (e.target.value.includes('youtu')) setNewMaterialType('video');
+                    }}
+                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all font-mono"
+                  />
+                </div>
+              )}
+
+              {/* Title */}
               <div className="space-y-1">
                 <label className="block text-[11px] font-bold text-slate-700 uppercase">Tiêu đề tài liệu</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ví dụ: Đề cương từ vựng IELTS B1"
+                  placeholder="Ví dụ: Bài giảng Ngữ pháp Unit 1 / Đề cương PDF"
                   value={newMaterialTitle}
                   onChange={(e) => setNewMaterialTitle(e.target.value)}
-                  className="w-full px-3.5 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all"
+                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all font-medium"
                 />
               </div>
 
+              {/* Type selector */}
               <div className="space-y-1">
-                <label className="block text-[11px] font-bold text-slate-700 uppercase">Đường dẫn liên kết (URL)</label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://example.com/tai-lieu-pdf"
-                  value={newMaterialUrl}
-                  onChange={(e) => setNewMaterialUrl(e.target.value)}
-                  className="w-full px-3.5 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all font-mono"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[11px] font-bold text-slate-700 uppercase">Loại tài liệu</label>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase">Định dạng phân loại</label>
                 <select
                   value={newMaterialType}
-                  onChange={(e) => setNewMaterialType(e.target.value)}
-                  className="w-full px-3.5 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all"
+                  onChange={(e) => setNewMaterialType(e.target.value as any)}
+                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all cursor-pointer"
                 >
-                  <option value="document">Tài liệu PDF / Word (.pdf, .docx)</option>
-                  <option value="link">Trang web ôn thi / Liên kết ngoài</option>
-                  <option value="video">Bài giảng video (YouTube, Drive...)</option>
-                  <option value="other">Loại khác</option>
+                  <option value="pdf">📄 Tài liệu PDF (.pdf)</option>
+                  <option value="docx">📝 File Word (.docx / .doc)</option>
+                  <option value="video">🎬 Video bài giảng (.mp4 / YouTube)</option>
+                  <option value="audio">🎧 File Audio bài nghe (.mp3 / .wav)</option>
+                  <option value="image">🖼️ Hình ảnh bài học (.png / .jpg)</option>
+                  <option value="link">🔗 Trang web liên kết ngoài</option>
+                  <option value="document">📁 Tài liệu khác</option>
                 </select>
               </div>
 
+              {/* Description */}
               <div className="space-y-1">
-                <label className="block text-[11px] font-bold text-slate-700 uppercase">Mô tả ngắn gọn</label>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase">Mô tả / Hướng dẫn học viên</label>
                 <textarea
-                  placeholder="Mô tả nội dung chính giúp học sinh nắm rõ trước khi click..."
+                  placeholder="Mô tả nội dung chính, hướng dẫn học sinh đọc hoặc xem trước khi thi..."
                   value={newMaterialDesc}
                   onChange={(e) => setNewMaterialDesc(e.target.value)}
                   rows={3}
-                  className="w-full px-3.5 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all"
+                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={materialSubmitting}
-                className="w-full bg-indigo-900 hover:bg-indigo-850 disabled:bg-indigo-300 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-2"
+                className="w-full bg-indigo-900 hover:bg-indigo-850 disabled:bg-indigo-300 text-white font-bold py-3.5 px-4 rounded-2xl text-xs shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-2"
               >
-                {materialSubmitting ? 'Đang thêm...' : 'Thêm tài liệu'}
+                {materialSubmitting ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
+                    Đang xử lý & lưu tài liệu...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" /> Tải lên kho tài liệu
+                  </>
+                )}
               </button>
             </form>
           </div>
 
           {/* Column 2: Materials List */}
-          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-3 mb-4 flex justify-between items-center">
-              <span>Danh sách tài liệu hoạt động ({materials.length})</span>
-            </h3>
+          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                <span>Danh sách tài liệu ({materials.length})</span>
+              </h3>
 
-            {materials.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+              {/* Search box */}
+              <div className="relative w-full sm:w-60">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Tìm tài liệu..."
+                  value={materialSearchTerm}
+                  onChange={(e) => setMaterialSearchTerm(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-900"
+                />
+              </div>
+            </div>
+
+            {/* Filter pills */}
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: 'all', label: 'Tất cả' },
+                { id: 'pdf', label: 'PDF' },
+                { id: 'docx', label: 'Word' },
+                { id: 'video', label: 'Video' },
+                { id: 'audio', label: 'Audio' },
+                { id: 'image', label: 'Ảnh' },
+                { id: 'link', label: 'Link' }
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setMaterialFilterType(f.id)}
+                  className={`px-3 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                    materialFilterType === f.id
+                      ? 'bg-indigo-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {filteredAdminMaterials.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                 <BookOpen className="w-12 h-12 mb-2 stroke-1" />
-                <p className="text-xs font-semibold">Chưa có tài liệu nào được đăng tải.</p>
-                <p className="text-[10px] text-slate-400">Vui lòng điền thông tin bên trái để tạo tài liệu đầu tiên.</p>
+                <p className="text-xs font-semibold">Chưa có tài liệu nào trong chuyên mục này.</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Vui lòng điền biểu mẫu bên trái để tải lên tài liệu mới.</p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto pr-1">
-                {materials.map((m) => {
-                  let IconComponent = BookOpen;
-                  if (m.type === 'document') IconComponent = FileText;
-                  else if (m.type === 'video') IconComponent = Video;
-                  else if (m.type === 'link') IconComponent = ExternalLink;
-
-                  return (
-                    <div key={m.id} className="py-4 first:pt-0 last:pb-0 flex justify-between items-start gap-4 hover:bg-slate-50/50 px-2 rounded-xl transition-colors">
-                      <div className="flex gap-3">
-                        <div className="p-2 bg-indigo-50 rounded-lg text-indigo-900 shrink-0">
-                          <IconComponent className="w-5 h-5" />
-                        </div>
-                        <div className="space-y-0.5">
-                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+              <div className="divide-y divide-slate-100 max-h-[580px] overflow-y-auto pr-1">
+                {filteredAdminMaterials.map((m) => (
+                  <div
+                    key={m.id}
+                    className="py-4 first:pt-0 last:pb-0 flex justify-between items-start gap-4 hover:bg-slate-50/70 p-3 rounded-2xl transition-colors"
+                  >
+                    <div className="flex gap-3 min-w-0">
+                      <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-2xl shrink-0">
+                        {getIconForType(m.type, m.url)}
+                      </div>
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight truncate">
                             {m.title}
-                            <span className="text-[9px] px-1.5 py-0.5 bg-indigo-50 border border-indigo-100 rounded-md text-indigo-900 font-mono font-semibold">
-                              {m.type}
-                            </span>
                           </h4>
-                          <p className="text-[11px] text-slate-500 leading-relaxed">{m.description || 'Không có mô tả.'}</p>
+                          <span className="text-[9px] px-2 py-0.5 bg-indigo-50 border border-indigo-100 rounded-md text-indigo-900 font-mono font-bold">
+                            {m.type}
+                          </span>
+                        </div>
+                        {m.fileName && (
+                          <p className="text-[10px] text-slate-400 font-mono truncate">
+                            📁 {m.fileName}
+                          </p>
+                        )}
+                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
+                          {m.description || 'Không có mô tả.'}
+                        </p>
+                        <div className="flex items-center gap-3 pt-1 text-[10px]">
                           <a
                             href={m.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-indigo-900 hover:underline font-mono inline-flex items-center gap-1 font-medium pt-1 animate-fade-in"
+                            className="text-indigo-900 hover:underline font-mono inline-flex items-center gap-1 font-bold truncate max-w-[240px]"
                           >
-                            {m.url} <ExternalLink className="w-3 h-3" />
+                            <ExternalLink className="w-3 h-3 shrink-0" /> Xem URL
                           </a>
                         </div>
                       </div>
+                    </div>
 
+                    <div className="flex items-center gap-1 shrink-0">
+                      <a
+                        href={m.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download={m.fileName || m.title}
+                        className="text-slate-600 hover:text-indigo-900 p-2 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                        title="Tải về / Mở"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
                       <button
                         onClick={() => handleDeleteMaterial(m.id)}
-                        className="text-rose-600 hover:text-rose-800 p-1.5 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        className="text-rose-600 hover:text-rose-800 p-2 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                         title="Xóa tài liệu"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -2784,19 +3020,27 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                               onChange={(e) => setExamAudio1Url(e.target.value)}
                               className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all font-mono mb-1.5"
                             />
-                            <label className={`inline-flex items-center gap-1 text-[10px] text-slate-700 px-2 py-1 rounded cursor-pointer transition-colors font-bold ${
-                              isUploadingAudio1 ? 'bg-slate-300 cursor-not-allowed' : 'bg-slate-100 hover:bg-slate-200'
-                            }`}>
-                              <Download className={`w-3 h-3 transform rotate-180 ${isUploadingAudio1 ? 'animate-bounce' : ''}`} /> 
-                              {isUploadingAudio1 ? 'Đang tải Audio 1...' : 'Tải lên Audio 1'}
-                              <input 
-                                type="file" 
-                                accept="audio/*" 
-                                disabled={isUploadingAudio1}
-                                className="hidden" 
-                                onChange={(e) => handleUploadAudio(e, 1)} 
-                              />
-                            </label>
+                            <div className="flex items-center gap-2">
+                              <label className={`inline-flex items-center gap-1 text-[10px] text-slate-700 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors font-bold ${
+                                isUploadingAudio1 ? 'bg-slate-300 cursor-not-allowed' : 'bg-slate-100 hover:bg-slate-200'
+                              }`}>
+                                <Download className={`w-3 h-3 transform rotate-180 ${isUploadingAudio1 ? 'animate-bounce' : ''}`} /> 
+                                {isUploadingAudio1 ? 'Đang tải Audio 1...' : 'Tải lên Audio 1'}
+                                <input 
+                                  type="file" 
+                                  accept="audio/*" 
+                                  disabled={isUploadingAudio1}
+                                  className="hidden" 
+                                  onChange={(e) => handleUploadAudio(e, 1)} 
+                                />
+                              </label>
+                            </div>
+                            {examAudio1Url && (
+                              <div className="mt-2 p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                                <span className="text-[10px] font-bold text-slate-500 block mb-1">🔊 Nghe thử Audio 1:</span>
+                                <audio src={examAudio1Url.startsWith('blob:') || examAudio1Url.startsWith('data:') ? examAudio1Url : `/api/audio-proxy?url=${encodeURIComponent(examAudio1Url)}`} controls className="w-full h-8" />
+                              </div>
+                            )}
                           </div>
 
                           <div className="space-y-1">
@@ -2809,19 +3053,27 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                               onChange={(e) => setExamAudio2Url(e.target.value)}
                               className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-900 text-xs transition-all font-mono mb-1.5"
                             />
-                            <label className={`inline-flex items-center gap-1 text-[10px] text-slate-700 px-2 py-1 rounded cursor-pointer transition-colors font-bold ${
-                              isUploadingAudio2 ? 'bg-slate-300 cursor-not-allowed' : 'bg-slate-100 hover:bg-slate-200'
-                            }`}>
-                              <Download className={`w-3 h-3 transform rotate-180 ${isUploadingAudio2 ? 'animate-bounce' : ''}`} /> 
-                              {isUploadingAudio2 ? 'Đang tải Audio 2...' : 'Tải lên Audio 2'}
-                              <input 
-                                type="file" 
-                                accept="audio/*" 
-                                disabled={isUploadingAudio2}
-                                className="hidden" 
-                                onChange={(e) => handleUploadAudio(e, 2)} 
-                              />
-                            </label>
+                            <div className="flex items-center gap-2">
+                              <label className={`inline-flex items-center gap-1 text-[10px] text-slate-700 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors font-bold ${
+                                isUploadingAudio2 ? 'bg-slate-300 cursor-not-allowed' : 'bg-slate-100 hover:bg-slate-200'
+                              }`}>
+                                <Download className={`w-3 h-3 transform rotate-180 ${isUploadingAudio2 ? 'animate-bounce' : ''}`} /> 
+                                {isUploadingAudio2 ? 'Đang tải Audio 2...' : 'Tải lên Audio 2'}
+                                <input 
+                                  type="file" 
+                                  accept="audio/*" 
+                                  disabled={isUploadingAudio2}
+                                  className="hidden" 
+                                  onChange={(e) => handleUploadAudio(e, 2)} 
+                                />
+                              </label>
+                            </div>
+                            {examAudio2Url && (
+                              <div className="mt-2 p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                                <span className="text-[10px] font-bold text-slate-500 block mb-1">🔊 Nghe thử Audio 2:</span>
+                                <audio src={examAudio2Url.startsWith('blob:') || examAudio2Url.startsWith('data:') ? examAudio2Url : `/api/audio-proxy?url=${encodeURIComponent(examAudio2Url)}`} controls className="w-full h-8" />
+                              </div>
+                            )}
                           </div>
                         </div>
 

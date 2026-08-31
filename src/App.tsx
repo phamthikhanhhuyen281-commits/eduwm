@@ -29,6 +29,7 @@ import VocabularySection from './components/VocabularySection';
 import ReadingSection from './components/ReadingSection';
 import WritingSection from './components/WritingSection';
 import AdminPanel from './components/AdminPanel';
+import StudentPortal from './components/StudentPortal';
 
 // Firebase Services
 import { candidateService } from './services/candidateService';
@@ -188,6 +189,8 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [skippedQuestions, setSkippedQuestions] = useState<Record<string, boolean>>({});
   const [activeExam, setActiveExam] = useState<any | null>(null);
+  const [exams, setExams] = useState<any[]>([]);
+  const [inTestMode, setInTestMode] = useState<boolean>(false);
   const [timeLeftSeconds, setTimeLeftSeconds] = useState(2700); // Dynamic timer, starts at default
   const [tabSwitches, setTabSwitches] = useState(0);
   const [testCompleted, setTestCompleted] = useState(false);
@@ -211,7 +214,7 @@ export default function App() {
     }
   }, []);
 
-  // Fetch Public settings on mount
+  // Fetch Public settings, materials and exams on mount
   useEffect(() => {
     settingsService.getSettings()
       .then((data) => {
@@ -227,6 +230,15 @@ export default function App() {
         setMaterials(mList || []);
       })
       .catch((err) => console.error('Error loading materials:', err));
+
+    examService.getExams()
+      .then((eList) => {
+        setExams(eList || []);
+        if (eList && eList.length > 0 && !activeExam) {
+          setActiveExam(eList[0]);
+        }
+      })
+      .catch((err) => console.error('Error loading exams:', err));
   }, []);
 
   // Restore session from localStorage if candidate info is already present
@@ -239,9 +251,9 @@ export default function App() {
     }
   }, []);
 
-  // Sync Timer Countdown
+  // Sync Timer Countdown (only runs during active inTestMode)
   useEffect(() => {
-    if (!candidate || testCompleted || isAdminMode || !activeExam) return;
+    if (!candidate || testCompleted || isAdminMode || !activeExam || !inTestMode) return;
 
     const totalSecs = (activeExam.durationMinutes || 45) * 60;
 
@@ -266,11 +278,11 @@ export default function App() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [candidate, testCompleted, isAdminMode, activeExam, answers]);
+  }, [candidate, testCompleted, isAdminMode, activeExam, answers, inTestMode]);
 
-  // Tab Switch / Visibility Change Monitoring
+  // Tab Switch / Visibility Change Monitoring (only active during test taking)
   useEffect(() => {
-    if (!candidate || testCompleted || isAdminMode) return;
+    if (!candidate || testCompleted || isAdminMode || !inTestMode) return;
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
@@ -282,7 +294,7 @@ export default function App() {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [candidate, testCompleted, isAdminMode, tabSwitches]);
+  }, [candidate, testCompleted, isAdminMode, tabSwitches, inTestMode]);
 
   const handleTabSwitchDetected = async () => {
     if (!candidate) return;
@@ -324,10 +336,6 @@ export default function App() {
 
       // Calculate elapsed time from candidate session
       const elapsed = data.candidate.durationSeconds || 0;
-      if (elapsed === 0) {
-        localStorage.removeItem('audio_l1_played');
-        localStorage.removeItem('audio_l2_played');
-      }
       const totalSecs = (data.exam?.durationMinutes || 45) * 60;
       const remaining = totalSecs - elapsed;
       setTimeLeftSeconds(remaining > 0 ? remaining : 0);
@@ -365,10 +373,6 @@ export default function App() {
         setSkippedQuestions(skips);
         
         const elapsed = data.candidate.durationSeconds || 0;
-        if (elapsed === 0) {
-          localStorage.removeItem('audio_l1_played');
-          localStorage.removeItem('audio_l2_played');
-        }
         const totalSecs = (data.exam?.durationMinutes || 45) * 60;
         const remaining = totalSecs - elapsed;
         setTimeLeftSeconds(remaining > 0 ? remaining : 0);
@@ -553,6 +557,21 @@ export default function App() {
             audio2Url={activeExam?.audio2Url}
             examId={activeExam?.id}
             candidateId={candidate?.id}
+            candidateAudioPlayback={candidate?.audioPlayback}
+            onAudioPlayed={(audioType) => {
+              setCandidate((prev: any) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  audioPlayback: {
+                    ...(prev.audioPlayback || {}),
+                    [`${audioType}Played`]: true,
+                    [`${audioType}PlayedAt`]: new Date().toISOString()
+                  },
+                  [`${audioType}Played`]: true
+                };
+              });
+            }}
           />
         );
       case 'speaking':
@@ -616,17 +635,61 @@ export default function App() {
     }
   };
 
+  const handleSelectExam = async (examId: string) => {
+    const chosen = exams.find((e) => e.id === examId);
+    if (chosen) {
+      setActiveExam(chosen);
+      if (candidate?.id) {
+        try {
+          await candidateService.updateCandidate(candidate.id, { examId: chosen.id });
+          setCandidate((prev: any) => ({ ...prev, examId: chosen.id }));
+        } catch (e) {
+          console.warn('Failed to update candidate examId:', e);
+        }
+      }
+    }
+  };
+
+  const handleStudentLogout = () => {
+    localStorage.removeItem('candidate_session');
+    setCandidate(null);
+    setAnswers({});
+    setSkippedQuestions({});
+    setTestCompleted(false);
+    setInTestMode(false);
+    setCurrentSection('listening');
+  };
+
   // 1. RENDER ADMIN PORTAL
   if (isAdminMode) {
     return <AdminPanel onBackToTest={() => setIsAdminMode(false)} />;
   }
 
-  // 2. RENDER WELCOME / START SCREEN
+  // 2. RENDER WELCOME / START SCREEN (LOGIN)
   if (!candidate) {
     return <StartScreen onRegister={handleRegister} loading={loading} onAdminClick={() => setIsAdminMode(true)} settings={settings} />;
   }
 
-  // 3. RENDER THANK YOU PAGE (TEST COMPLETED)
+  // 3. RENDER STUDENT PORTAL (CHOICE SCREEN: 1. LÀM BÀI TEST & 2. XEM TÀI LIỆU ADMIN TẢI LÊN)
+  if (!inTestMode) {
+    return (
+      <StudentPortal
+        candidate={candidate}
+        activeExam={activeExam}
+        exams={exams}
+        onSelectExam={handleSelectExam}
+        onStartTest={() => setInTestMode(true)}
+        onLogout={handleStudentLogout}
+        materials={materials}
+        testCompleted={testCompleted}
+        settings={settings}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode(!darkMode)}
+      />
+    );
+  }
+
+  // 4. RENDER THANK YOU PAGE (TEST COMPLETED)
   if (testCompleted) {
     return (
       <div id="thank-you-screen" className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-between transition-colors duration-200">
@@ -774,7 +837,7 @@ export default function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
                     {materials.map((m) => {
                       let IconComponent = BookOpen;
-                      if (m.type === 'document') IconComponent = FileText;
+                      if (m.type === 'document' || m.type === 'docx' || m.type === 'pdf') IconComponent = FileText;
                       else if (m.type === 'video') IconComponent = Video;
                       else if (m.type === 'link') IconComponent = ExternalLink;
 
@@ -811,18 +874,18 @@ export default function App() {
             </motion.div>
           </div>
 
-          {/* Logout Action Area */}
-          <div className="text-center pt-4">
+          {/* Action Area: Back to Materials Hub + Logout */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             <button
-              onClick={() => {
-                localStorage.removeItem('candidate_session');
-                setCandidate(null);
-                setAnswers({});
-                setSkippedQuestions({});
-                setTestCompleted(false);
-                setCurrentSection('listening');
-              }}
-              className="bg-indigo-900 hover:bg-indigo-850 dark:bg-slate-800 dark:hover:bg-slate-700 text-white dark:text-slate-100 font-extrabold py-3 px-8 rounded-2xl shadow hover:shadow-md transition-all cursor-pointer text-xs uppercase tracking-wider"
+              onClick={() => setInTestMode(false)}
+              className="w-full sm:w-auto bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-extrabold py-3.5 px-6 rounded-2xl shadow hover:shadow-md transition-all cursor-pointer text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+            >
+              <BookOpen className="w-4 h-4" /> Xem Kho Tài Liệu & Bảng điều khiển
+            </button>
+
+            <button
+              onClick={handleStudentLogout}
+              className="w-full sm:w-auto bg-indigo-900 hover:bg-indigo-850 dark:bg-slate-800 dark:hover:bg-slate-750 text-white dark:text-slate-100 font-extrabold py-3.5 px-8 rounded-2xl shadow hover:shadow-md transition-all cursor-pointer text-xs uppercase tracking-wider"
             >
               Đăng xuất & Quay về Trang chủ
             </button>
@@ -844,7 +907,7 @@ export default function App() {
     );
   }
 
-  // 4. RENDER TEST TAKING CANVAS
+  // 5. RENDER TEST TAKING CANVAS
   return (
     <div id="test-taking-container" className="min-h-screen bg-slate-50 flex flex-col justify-between">
       
@@ -859,6 +922,7 @@ export default function App() {
           setCurrentQuestionId(''); // clear question locator
         }}
         sectionsList={SECTIONS_LIST}
+        onBackToPortal={() => setInTestMode(false)}
       />
 
       {/* Warning Banner below Header */}

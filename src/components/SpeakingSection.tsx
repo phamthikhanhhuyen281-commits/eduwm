@@ -31,6 +31,22 @@ export default function SpeakingSection({
   const audioChunks = useRef<Record<string, Blob[]>>({});
   const timers = useRef<Record<string, NodeJS.Timeout>>({});
 
+  // Restore recorded audios from existing candidate answers
+  useEffect(() => {
+    if (answers) {
+      const initialDone: Record<string, 'idle' | 'recording' | 'saving' | 'done'> = {};
+      const initialUrls: Record<string, string> = {};
+      ['speaking_p1', 'speaking_p2_q1', 'speaking_p2_q2', 'speaking_p2_q3'].forEach(k => {
+        if (answers[k]) {
+          initialDone[k] = 'done';
+          initialUrls[k] = answers[k];
+        }
+      });
+      setRecordingState(prev => ({ ...initialDone, ...prev }));
+      setAudioUrls(prev => ({ ...initialUrls, ...prev }));
+    }
+  }, [answers]);
+
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
@@ -108,32 +124,34 @@ export default function SpeakingSection({
       mediaRecorder.onstop = async () => {
         setRecordingState(prev => ({ ...prev, [id]: 'saving' }));
         
-        const audioBlob = new Blob(audioChunks.current[id], { type: mimeType || mediaRecorder.mimeType || 'audio/wav' });
-        const localUrl = URL.createObjectURL(audioBlob);
-        setAudioUrls(prev => ({ ...prev, [id]: localUrl }));
-
-        let downloadUrl = localUrl;
+        const audioBlob = new Blob(audioChunks.current[id], { type: mimeType || mediaRecorder.mimeType || 'audio/webm' });
+        const localBlobUrl = URL.createObjectURL(audioBlob);
+        
+        let savedUrl = localBlobUrl;
         try {
-          // Upload audio blob with auto-retry and multi-tier fallbacks
-          downloadUrl = await storageService.uploadAudioBlob(audioBlob, candidateId, id);
+          // Upload audio blob with auto-retry and multi-tier server/cloud storage
+          savedUrl = await storageService.uploadAudioBlob(audioBlob, candidateId, id);
         } catch (uploadErr) {
           console.warn('Storage upload error, using local fallback:', uploadErr);
-          downloadUrl = localUrl;
+          savedUrl = localBlobUrl;
         }
+
+        // Store active playable URL
+        setAudioUrls(prev => ({ ...prev, [id]: savedUrl }));
 
         // Map the audio path to the proper sub-field of answers
         let answersUpdate: any = {};
         if (id === 'speaking_p1') {
-          answersUpdate.speakingPart1 = { audioPath: downloadUrl };
+          answersUpdate.speakingPart1 = { audioPath: savedUrl };
         } else if (id === 'speaking_p2_q1') {
-          answersUpdate.speakingPart2 = { sp_1_audioPath: downloadUrl };
+          answersUpdate.speakingPart2 = { sp_1_audioPath: savedUrl };
         } else if (id === 'speaking_p2_q2') {
-          answersUpdate.speakingPart2 = { sp_2_audioPath: downloadUrl };
+          answersUpdate.speakingPart2 = { sp_2_audioPath: savedUrl };
         } else if (id === 'speaking_p2_q3') {
-          answersUpdate.speakingPart2 = { sp_3_audioPath: downloadUrl };
+          answersUpdate.speakingPart2 = { sp_3_audioPath: savedUrl };
         }
 
-        // Update candidate document in Firestore (with auto-retry and offline cache)
+        // Update candidate document in Firestore / DB
         try {
           await candidateService.updateAnswers(candidateId, answersUpdate);
         } catch (dbErr) {
@@ -141,27 +159,55 @@ export default function SpeakingSection({
           try {
             const backupKey = `offline_speaking_${candidateId}`;
             const existingBackup = JSON.parse(localStorage.getItem(backupKey) || '{}');
-            localStorage.setItem(backupKey, JSON.stringify({ ...existingBackup, [id]: downloadUrl }));
+            localStorage.setItem(backupKey, JSON.stringify({ ...existingBackup, [id]: savedUrl }));
           } catch (e) {}
         }
         
         // Mark answer as registered (save path as answer value in UI for tracking)
-        onAnswerChange(id, downloadUrl);
+        onAnswerChange(id, savedUrl);
 
         // If speaking_p1 (Read Aloud), trigger Gemini AI Pronunciation scoring automatically in background
-        if (id === 'speaking_p1' && downloadUrl && typeof downloadUrl === 'string' && downloadUrl.startsWith('http')) {
-          speakingService.evaluateSpeakingAudio(downloadUrl, speakingReadAloud.text)
-            .then(async (evaluation) => {
-              const answersUpdateWithEvaluation = {
-                speakingPart1: {
-                  audioPath: downloadUrl,
-                  aiEvaluation: evaluation
-                }
-              };
-              await candidateService.updateAnswers(candidateId, answersUpdateWithEvaluation);
-              onRefreshSession(); // update state in parent
+        if (id === 'speaking_p1' && savedUrl) {
+          fetch('/api/speaking/evaluate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: candidateId,
+              audioPath: savedUrl,
+              referenceText: speakingReadAloud?.text
             })
-            .catch(err => console.error('Gemini background evaluate failed:', err));
+          })
+            .then(res => res.json())
+            .then(async data => {
+              if (data.evaluation) {
+                try {
+                  const answersUpdateWithEvaluation = {
+                    speakingPart1: {
+                      audioPath: savedUrl,
+                      aiEvaluation: data.evaluation
+                    }
+                  };
+                  await candidateService.updateAnswers(candidateId, answersUpdateWithEvaluation);
+                } catch (e) {}
+                onRefreshSession();
+              }
+            })
+            .catch(() => {
+              if (typeof savedUrl === 'string' && savedUrl.startsWith('http')) {
+                speakingService.evaluateSpeakingAudio(savedUrl, speakingReadAloud.text)
+                  .then(async (evaluation) => {
+                    const answersUpdateWithEvaluation = {
+                      speakingPart1: {
+                        audioPath: savedUrl,
+                        aiEvaluation: evaluation
+                      }
+                    };
+                    await candidateService.updateAnswers(candidateId, answersUpdateWithEvaluation);
+                    onRefreshSession();
+                  })
+                  .catch(err => console.error('Gemini background evaluate failed:', err));
+              }
+            });
         }
 
         setRecordingState(prev => ({ ...prev, [id]: 'done' }));
@@ -170,7 +216,7 @@ export default function SpeakingSection({
         stream.getTracks().forEach(track => track.stop());
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250);
       setRecordingState(prev => ({ ...prev, [id]: 'recording' }));
       setRecordingSeconds(prev => ({ ...prev, [id]: 0 }));
 
@@ -319,18 +365,31 @@ export default function SpeakingSection({
 
             {recordingState['speaking_p1'] === 'done' && (
               <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-xl text-xs font-extrabold">
-                <Check className="w-4 h-4" /> Đã ghi nhận & Khóa bài nói (Không được ghi âm lại)
+                <Check className="w-4 h-4" /> Đã lưu bài nói thành công ✓
               </div>
             )}
           </div>
 
           {/* Reassurance text */}
           {recordingState['speaking_p1'] === 'done' && (
-            <div className="text-xs text-slate-400 flex items-center gap-2 font-medium">
-              <span className="font-sans italic">Hệ thống AI đang chấm điểm phát âm của bạn.</span>
+            <div className="text-xs text-slate-500 flex items-center gap-2 font-medium">
+              <span className="font-sans italic">Hệ thống đã lưu bản ghi âm an toàn.</span>
             </div>
           )}
         </div>
+
+        {/* Audio Player Preview for Part 1 */}
+        {(audioUrls['speaking_p1'] || answers['speaking_p1']) && (
+          <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+            <span className="text-xs font-bold text-slate-700 block">Nghe lại bản ghi âm của bạn:</span>
+            <audio
+              src={audioUrls['speaking_p1'] || answers['speaking_p1']}
+              controls
+              className="w-full h-8 rounded-lg"
+              preload="metadata"
+            />
+          </div>
+        )}
       </div>
 
       {/* PART 2: INTERVIEW QUESTIONS */}
@@ -413,9 +472,14 @@ export default function SpeakingSection({
                   )}
 
                   {isCompleted && (
-                    <span className="flex items-center justify-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1.5 rounded-lg text-xs font-black">
-                      <Check className="w-3.5 h-3.5" /> Đã lưu ✓ (Không thể ghi lại)
-                    </span>
+                    <div className="space-y-1.5 pt-1">
+                      <span className="flex items-center justify-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 rounded-lg text-xs font-bold">
+                        <Check className="w-3.5 h-3.5" /> Đã lưu bài nói ✓
+                      </span>
+                      {(audioUrls[id] || answers[id]) && (
+                        <audio src={audioUrls[id] || answers[id]} controls className="w-full h-7" preload="metadata" />
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

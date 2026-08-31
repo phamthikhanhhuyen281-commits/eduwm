@@ -22,6 +22,14 @@ export interface Candidate {
   logs: CandidateLog[];
   writingScore: number;
   writingComment: string;
+  audioPlayback?: {
+    audio1Played?: boolean;
+    audio1PlayedAt?: string;
+    audio2Played?: boolean;
+    audio2PlayedAt?: string;
+  };
+  audio1Played?: boolean;
+  audio2Played?: boolean;
   answers: {
     listeningPart1: Record<string, string>;
     listeningPart2: Record<string, string>;
@@ -340,6 +348,12 @@ export const candidateService = {
       logs: [{ timestamp: new Date().toISOString(), action: 'Đăng ký tài khoản thi.' }],
       writingScore: 0,
       writingComment: '',
+      audioPlayback: {
+        audio1Played: false,
+        audio2Played: false
+      },
+      audio1Played: false,
+      audio2Played: false,
       answers: {
         listeningPart1: {},
         listeningPart2: {},
@@ -429,7 +443,55 @@ export const candidateService = {
     };
   },
 
-  async updateAnswers(id: string, answersUpdate: Partial<Candidate['answers']>, durationSeconds?: number): Promise<Candidate> {
+  formatFlatAnswers(flatAnswers: Record<string, string>): Partial<Candidate['answers']> {
+    const nested: any = {
+      listeningPart1: {},
+      listeningPart2: {},
+      grammar: {},
+      vocabulary: {},
+      readingPartA: {},
+      readingPartB: {},
+      writing: {},
+      speakingPart1: {},
+      speakingPart2: {},
+    };
+    
+    if (!flatAnswers) return nested;
+
+    Object.entries(flatAnswers).forEach(([k, v]) => {
+      const activeKey = k.startsWith('__NOTE__') ? k.replace('__NOTE__', '') : k;
+      if (activeKey === 'speaking_p1') {
+        nested.speakingPart1 = { audioPath: v };
+      } else if (activeKey === 'speaking_p2_q1') {
+        nested.speakingPart2.sp_1_audioPath = v;
+      } else if (activeKey === 'speaking_p2_q2') {
+        nested.speakingPart2.sp_2_audioPath = v;
+      } else if (activeKey === 'speaking_p2_q3') {
+        nested.speakingPart2.sp_3_audioPath = v;
+      } else if (activeKey.startsWith('l1_')) {
+        nested.listeningPart1[k] = v;
+      } else if (activeKey.startsWith('l2_')) {
+        nested.listeningPart2[k] = v;
+      } else if (activeKey.startsWith('g_')) {
+        nested.grammar[k] = v;
+      } else if (activeKey.startsWith('v_')) {
+        nested.vocabulary[k] = v;
+      } else if (activeKey.startsWith('r_')) {
+        const num = parseInt(activeKey.replace('r_', ''), 10);
+        if (num <= 2) {
+          nested.readingPartA[k] = v;
+        } else {
+          nested.readingPartB[k] = v;
+        }
+      } else if (activeKey.startsWith('w_')) {
+        nested.writing[k] = v;
+      }
+    });
+
+    return nested;
+  },
+
+  async updateAnswers(id: string, answersUpdate: any, durationSeconds?: number): Promise<Candidate> {
     const candidate = await this.getCandidateById(id);
     if (!candidate) {
       throw new Error('Không tìm thấy thông tin thí sinh.');
@@ -439,16 +501,40 @@ export const candidateService = {
       return candidate;
     }
 
+    // Check if answersUpdate is a flat Record<string, string> or a structured partial Candidate['answers']
+    let parsedUpdate = answersUpdate || {};
+    const isFlat = parsedUpdate && (
+      parsedUpdate.speaking_p1 !== undefined ||
+      parsedUpdate.speaking_p2_q1 !== undefined ||
+      Object.keys(parsedUpdate).some(k => k.startsWith('l1_') || k.startsWith('l2_') || k.startsWith('g_') || k.startsWith('v_') || k.startsWith('r_') || k.startsWith('w_'))
+    );
+
+    if (isFlat) {
+      const converted = this.formatFlatAnswers(parsedUpdate);
+      parsedUpdate = converted;
+    }
+
     const mergedAnswers = {
-      listeningPart1: { ...(candidate.answers?.listeningPart1 || {}), ...(answersUpdate.listeningPart1 || {}) },
-      listeningPart2: { ...(candidate.answers?.listeningPart2 || {}), ...(answersUpdate.listeningPart2 || {}) },
-      grammar: { ...(candidate.answers?.grammar || {}), ...(answersUpdate.grammar || {}) },
-      vocabulary: { ...(candidate.answers?.vocabulary || {}), ...(answersUpdate.vocabulary || {}) },
-      readingPartA: { ...(candidate.answers?.readingPartA || {}), ...(answersUpdate.readingPartA || {}) },
-      readingPartB: { ...(candidate.answers?.readingPartB || {}), ...(answersUpdate.readingPartB || {}) },
-      speakingPart1: { ...(candidate.answers?.speakingPart1 || {}), ...(answersUpdate.speakingPart1 || {}) },
-      speakingPart2: { ...(candidate.answers?.speakingPart2 || {}), ...(answersUpdate.speakingPart2 || {}) },
-      writing: { ...(candidate.answers?.writing || {}), ...(answersUpdate.writing || {}) }
+      listeningPart1: { ...(candidate.answers?.listeningPart1 || {}), ...(parsedUpdate.listeningPart1 || {}) },
+      listeningPart2: { ...(candidate.answers?.listeningPart2 || {}), ...(parsedUpdate.listeningPart2 || {}) },
+      grammar: { ...(candidate.answers?.grammar || {}), ...(parsedUpdate.grammar || {}) },
+      vocabulary: { ...(candidate.answers?.vocabulary || {}), ...(parsedUpdate.vocabulary || {}) },
+      readingPartA: { ...(candidate.answers?.readingPartA || {}), ...(parsedUpdate.readingPartA || {}) },
+      readingPartB: { ...(candidate.answers?.readingPartB || {}), ...(parsedUpdate.readingPartB || {}) },
+      speakingPart1: {
+        ...(candidate.answers?.speakingPart1 || {}),
+        ...(parsedUpdate.speakingPart1 || {}),
+        // Preserve existing audioPath if updated is null/empty
+        audioPath: parsedUpdate.speakingPart1?.audioPath || candidate.answers?.speakingPart1?.audioPath || null
+      },
+      speakingPart2: {
+        ...(candidate.answers?.speakingPart2 || {}),
+        ...(parsedUpdate.speakingPart2 || {}),
+        sp_1_audioPath: parsedUpdate.speakingPart2?.sp_1_audioPath || candidate.answers?.speakingPart2?.sp_1_audioPath || null,
+        sp_2_audioPath: parsedUpdate.speakingPart2?.sp_2_audioPath || candidate.answers?.speakingPart2?.sp_2_audioPath || null,
+        sp_3_audioPath: parsedUpdate.speakingPart2?.sp_3_audioPath || candidate.answers?.speakingPart2?.sp_3_audioPath || null,
+      },
+      writing: { ...(candidate.answers?.writing || {}), ...(parsedUpdate.writing || {}) }
     };
 
     const updates: any = { answers: mergedAnswers };
@@ -539,6 +625,82 @@ export const candidateService = {
         }
       }
     }
+
+    return candidate;
+  },
+
+  async recordAudioPlayed(id: string, audioType: 'audio1' | 'audio2'): Promise<Candidate | null> {
+    let candidate = await this.getCandidateById(id);
+    if (!candidate) {
+      try {
+        const sessionStr = localStorage.getItem('candidate_session');
+        if (sessionStr) {
+          const session = JSON.parse(sessionStr);
+          if (session?.candidate?.id === id) {
+            candidate = session.candidate;
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (!candidate) return null;
+
+    const playedKey = `${audioType}Played` as 'audio1Played' | 'audio2Played';
+    const playedAtKey = `${audioType}PlayedAt` as 'audio1PlayedAt' | 'audio2PlayedAt';
+    const now = new Date().toISOString();
+
+    const audioPlayback = {
+      ...(candidate.audioPlayback || {}),
+      [playedKey]: true,
+      [playedAtKey]: now
+    };
+
+    const actionText = audioType === 'audio1'
+      ? 'Đã bắt đầu nghe Audio Phần 1 (Khóa bài nghe - chỉ được nghe 1 lần duy nhất).'
+      : 'Đã bắt đầu nghe Audio Phần 2 (Khóa bài nghe - chỉ được nghe 1 lần duy nhất).';
+
+    const updatedLogs = [...(candidate.logs || []), { timestamp: now, action: actionText }];
+
+    candidate.audioPlayback = audioPlayback;
+    candidate.logs = updatedLogs;
+    (candidate as any)[playedKey] = true;
+
+    const updates: any = {
+      audioPlayback,
+      logs: updatedLogs,
+      [playedKey]: true
+    };
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await updateDoc(doc(db, 'candidates', id), updates);
+        break;
+      } catch (err) {
+        console.warn(`recordAudioPlayed attempt ${attempt} failed:`, err);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 300 * attempt));
+        }
+      }
+    }
+
+    // Save in local session cache
+    try {
+      const sessionStr = localStorage.getItem('candidate_session');
+      if (sessionStr) {
+        const session = JSON.parse(sessionStr);
+        session.candidate = candidate;
+        localStorage.setItem('candidate_session', JSON.stringify(session));
+      }
+    } catch (e) {}
+
+    // Async sync to server
+    try {
+      fetch('/api/candidates/audio-played', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, audioType })
+      }).catch(() => {});
+    } catch (e) {}
 
     return candidate;
   },
@@ -683,6 +845,12 @@ export const candidateService = {
       writingComment: '',
       scores: null,
       isReset: true,
+      audioPlayback: {
+        audio1Played: false,
+        audio2Played: false
+      },
+      audio1Played: false,
+      audio2Played: false,
       history: updatedHistory,
       answers: {
         listeningPart1: {},

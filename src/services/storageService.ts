@@ -152,7 +152,7 @@ export const storageService = {
   },
 
   /**
-   * Upload a raw audio Blob directly to Firebase Storage with auto-retry and multi-tier fallback
+   * Upload a raw audio Blob directly to Server / Firebase Storage with multi-tier fallback
    */
   async uploadAudioBlob(blob: Blob, candidateId: string, part: string): Promise<string> {
     let ext = 'webm';
@@ -161,26 +161,10 @@ export const storageService = {
     else if (blob.type.includes('wav')) ext = 'wav';
     else if (blob.type.includes('ogg')) ext = 'ogg';
 
-    // 1. Try Firebase Storage with 3 attempts
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const fileRef = ref(storage, `candidates/${candidateId}/${part}.${ext}`);
-        const snap = await uploadBytes(fileRef, blob, {
-          contentType: blob.type
-        });
-        const downloadUrl = await getDownloadURL(snap.ref);
-        return downloadUrl;
-      } catch (err) {
-        console.warn(`Firebase Storage uploadAudioBlob attempt ${attempt} failed:`, err);
-        if (attempt < 3) {
-          await new Promise(r => setTimeout(r, 500 * attempt));
-        }
-      }
-    }
-
-    // 2. Custom express server fallback
+    // 1. Convert Blob to Base64
+    let base64Data = '';
     try {
-      const base64Data = await new Promise<string>((resolve, reject) => {
+      base64Data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
           if (typeof reader.result === 'string') resolve(reader.result);
@@ -189,41 +173,61 @@ export const storageService = {
         reader.onerror = () => reject(new Error('Lỗi đọc audio blob'));
         reader.readAsDataURL(blob);
       });
-
-      const response = await fetch('/api/admin/upload-file', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer PlAcEmEnT_TeSt_SeCrEt_Token'
-        },
-        body: JSON.stringify({
-          fileName: `speaking_${candidateId}_${part}.${ext}`,
-          fileData: base64Data
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.filePath) {
-          return result.filePath;
-        }
-      }
-    } catch (serverErr) {
-      console.warn('Custom backend audio upload fallback failed:', serverErr);
+    } catch (e) {
+      console.error('Failed to convert audio blob to base64:', e);
     }
 
-    // 3. Fallback to inline Base64 data URL - 100% reliable, offline-capable, never fails
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          resolve(reader.result);
-        } else {
-          resolve('');
+    // 2. Primary Fast & Reliable Method: Upload directly to server backend candidate audio storage
+    if (base64Data) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetch('/api/candidates/upload-audio', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              id: candidateId,
+              part,
+              audioData: base64Data
+            })
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.audioPath) {
+              console.log(`Successfully saved speaking recording via server: ${result.audioPath}`);
+              return result.audioPath;
+            }
+          }
+        } catch (apiErr) {
+          console.warn(`Server upload-audio attempt ${attempt} failed:`, apiErr);
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, 400 * attempt));
+          }
         }
-      };
-      reader.onerror = () => resolve('');
-      reader.readAsDataURL(blob);
-    });
+      }
+    }
+
+    // 3. Secondary Method: Firebase Storage
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const fileRef = ref(storage, `candidates/${candidateId}/${part}_${Date.now()}.${ext}`);
+        const snap = await uploadBytes(fileRef, blob, {
+          contentType: blob.type
+        });
+        const downloadUrl = await getDownloadURL(snap.ref);
+        console.log(`Successfully saved speaking recording to Firebase Storage: ${downloadUrl}`);
+        return downloadUrl;
+      } catch (err) {
+        console.warn(`Firebase Storage uploadAudioBlob attempt ${attempt} failed:`, err);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 400 * attempt));
+        }
+      }
+    }
+
+    // 4. Return base64 as final fallback if all network requests fail
+    return base64Data;
   }
 };

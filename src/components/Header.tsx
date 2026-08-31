@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, ShieldCheck, User2, Award } from 'lucide-react';
+import { Clock, ShieldCheck, User2, Award, BookOpen } from 'lucide-react';
 import LanguageToggle from './LanguageToggle';
 import { languageService, Language } from '../services/languageService';
 
@@ -10,6 +10,7 @@ interface HeaderProps {
   currentSection: string;
   onSectionSelect: (sectionName: string) => void;
   sectionsList: { id: string; label: string }[];
+  onBackToPortal?: () => void;
 }
 
 export default function Header({
@@ -18,7 +19,8 @@ export default function Header({
   timeLeftSeconds,
   currentSection,
   onSectionSelect,
-  sectionsList
+  sectionsList,
+  onBackToPortal
 }: HeaderProps) {
   const [lang, setLang] = useState<Language>(languageService.getLanguage());
 
@@ -108,6 +110,18 @@ export default function Header({
                 {formatTime(timeLeftSeconds)}
               </div>
             </div>
+
+            {onBackToPortal && (
+              <button
+                type="button"
+                onClick={onBackToPortal}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-white/15 shrink-0"
+                title="Quay lại Trang chủ học viên & Xem tài liệu"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-indigo-300" />
+                <span className="hidden md:inline">Trang chủ & Tài liệu</span>
+              </button>
+            )}
 
             {/* Language Toggle */}
             <LanguageToggle />

@@ -6,30 +6,33 @@ export interface Material {
   title: string;
   description: string;
   url: string;
-  type: string; // 'document' | 'link' | 'video' | 'other'
+  type: 'pdf' | 'docx' | 'image' | 'video' | 'audio' | 'link' | 'document' | 'other';
+  fileName?: string;
+  fileSize?: number;
+  uploadedBy?: string;
   createdAt: string;
 }
 
 export const materialService = {
   async getMaterials(): Promise<Material[]> {
-    try {
-      const colRef = collection(db, 'materials');
-      const q = query(colRef, orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      const list: Material[] = [];
-      snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as Material);
-      });
-      return list;
-    } catch (err: any) {
-      const isOffline = err?.message?.includes('offline') || err?.code === 'unavailable';
-      if (isOffline) {
-        console.warn('Firestore is offline, unable to fetch materials.');
-      } else {
-        console.error('Error getting materials:', err);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const colRef = collection(db, 'materials');
+        const q = query(colRef, orderBy('createdAt', 'desc'));
+        const snap = await getDocs(q);
+        const list: Material[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...d.data() } as Material);
+        });
+        return list;
+      } catch (err: any) {
+        console.warn(`getMaterials attempt ${attempt} failed:`, err);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 400 * attempt));
+        }
       }
-      return [];
     }
+    return [];
   },
 
   async saveMaterial(material: Material): Promise<void> {

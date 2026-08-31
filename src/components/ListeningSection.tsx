@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Volume2, Headphones, AlertTriangle, HelpCircle } from 'lucide-react';
+import { Play, Volume2, Headphones, AlertTriangle, HelpCircle, RefreshCw, CheckCircle2, Lock } from 'lucide-react';
 import { LISTENING_PART_1, LISTENING_PART_2 } from '../questions';
+import { candidateService } from '../services/candidateService';
 
 interface ListeningSectionProps {
   answers: Record<string, string>;
@@ -14,6 +15,13 @@ interface ListeningSectionProps {
   audio2Url?: string;
   examId?: string;
   candidateId?: string;
+  candidateAudioPlayback?: {
+    audio1Played?: boolean;
+    audio1PlayedAt?: string;
+    audio2Played?: boolean;
+    audio2PlayedAt?: string;
+  };
+  onAudioPlayed?: (audioType: 'audio1' | 'audio2') => void;
 }
 
 export default function ListeningSection({
@@ -27,28 +35,84 @@ export default function ListeningSection({
   audio1Url = '',
   audio2Url = '',
   examId = '',
-  candidateId = ''
+  candidateId = '',
+  candidateAudioPlayback,
+  onAudioPlayed
 }: ListeningSectionProps) {
   const getAudio1Key = () => {
-    const cleanUrl = audio1Url ? audio1Url.replace(/[^a-zA-Z0-9]/g, '').slice(-30) : 'none';
     const cleanCandidate = candidateId || 'guest';
     const cleanExam = examId || 'default';
-    return `audio_l1_played_${cleanCandidate}_${cleanExam}_${cleanUrl}`;
+    return `audio_l1_played_${cleanCandidate}_${cleanExam}`;
   };
 
   const getAudio2Key = () => {
-    const cleanUrl = audio2Url ? audio2Url.replace(/[^a-zA-Z0-9]/g, '').slice(-30) : 'none';
     const cleanCandidate = candidateId || 'guest';
     const cleanExam = examId || 'default';
-    return `audio_l2_played_${cleanCandidate}_${cleanExam}_${cleanUrl}`;
+    return `audio_l2_played_${cleanCandidate}_${cleanExam}`;
   };
 
   const getProxiedUrl = (url?: string) => {
-    if (!url) return undefined;
+    if (!url) return '';
     if (url.startsWith('/') || url.startsWith('blob:') || url.startsWith('data:')) {
       return url;
     }
     return `/api/audio-proxy?url=${encodeURIComponent(url)}`;
+  };
+
+  const formatSeconds = (sec: number) => {
+    if (!sec || isNaN(sec)) return '00:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Sound Test Helper using Web Audio API chime
+  const [testSoundPlaying, setTestSoundPlaying] = useState(false);
+  const [soundTestSuccess, setSoundTestSuccess] = useState(false);
+
+  const handleTestSpeaker = () => {
+    try {
+      setTestSoundPlaying(true);
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        alert('Trình duyệt của bạn không hỗ trợ Web Audio. Vui lòng thử trên Chrome hoặc Edge.');
+        setTestSoundPlaying(false);
+        return;
+      }
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      // Play a pleasant two-tone chime (523Hz C5 -> 659Hz E5 -> 784Hz G5)
+      const now = ctx.currentTime;
+      const notes = [523.25, 659.25, 783.99];
+
+      notes.forEach((freq, index) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + index * 0.15);
+
+        gain.gain.setValueAtTime(0, now + index * 0.15);
+        gain.gain.linearRampToValueAtTime(0.3, now + index * 0.15 + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.15 + 0.35);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(now + index * 0.15);
+        osc.stop(now + index * 0.15 + 0.4);
+      });
+
+      setTimeout(() => {
+        setTestSoundPlaying(false);
+        setSoundTestSuccess(true);
+      }, 900);
+    } catch (e) {
+      console.error('Sound check failed:', e);
+      setTestSoundPlaying(false);
+    }
   };
 
   const renderInlineBlank = (qId: string, itemNum: number, displayNum: string) => {
@@ -130,29 +194,43 @@ export default function ListeningSection({
 
   const [audio1Progress, setAudio1Progress] = useState(0);
   const [audio2Progress, setAudio2Progress] = useState(0);
+  const [audio1CurrentTime, setAudio1CurrentTime] = useState(0);
+  const [audio1Duration, setAudio1Duration] = useState(0);
+  const [audio2CurrentTime, setAudio2CurrentTime] = useState(0);
+  const [audio2Duration, setAudio2Duration] = useState(0);
+  const [audio1ErrorMsg, setAudio1ErrorMsg] = useState<string | null>(null);
+  const [audio2ErrorMsg, setAudio2ErrorMsg] = useState<string | null>(null);
+  const [audio1UsingFallback, setAudio1UsingFallback] = useState(false);
+  const [audio2UsingFallback, setAudio2UsingFallback] = useState(false);
 
   const audio1Ref = useRef<HTMLAudioElement | null>(null);
   const audio2Ref = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize audio state from localStorage and respect "never play again" rule
+  // Initialize audio state from candidate Firestore document and localStorage (Strict 1-time per account per exam)
   useEffect(() => {
     const key1 = getAudio1Key();
     const key2 = getAudio2Key();
-    const isL1Played = localStorage.getItem(key1) === 'true';
-    const isL2Played = localStorage.getItem(key2) === 'true';
+    const isL1Played = 
+      candidateAudioPlayback?.audio1Played === true ||
+      localStorage.getItem(key1) === 'true';
+    const isL2Played = 
+      candidateAudioPlayback?.audio2Played === true ||
+      localStorage.getItem(key2) === 'true';
     
     if (isL1Played) {
       setAudio1State('ended');
+      localStorage.setItem(key1, 'true');
     } else {
       setAudio1State('idle');
     }
 
     if (isL2Played) {
       setAudio2State('ended');
+      localStorage.setItem(key2, 'true');
     } else {
       setAudio2State('idle');
     }
-  }, [audio1Url, audio2Url, candidateId, examId]);
+  }, [audio1Url, audio2Url, candidateId, examId, candidateAudioPlayback?.audio1Played, candidateAudioPlayback?.audio2Played]);
 
   // Cleanup audio elements on unmount to prevent playing in background
   useEffect(() => {
@@ -186,45 +264,136 @@ export default function ListeningSection({
     }
   }, [currentQuestionId]);
 
-  const handlePlayAudio1 = () => {
+  const handlePlayAudio1 = async () => {
     if (audio1State !== 'idle') return;
-    
-    // Lock immediately to prevent re-triggering ever again
-    localStorage.setItem(getAudio1Key(), 'true');
-    setAudio1State('playing');
+    setAudio1ErrorMsg(null);
 
-    if (audio1Ref.current) {
-      audio1Ref.current.play().catch((err) => {
-        if (err && (err.name === 'AbortError' || err.message?.includes('interrupted') || err.message?.includes('removed'))) {
-          console.warn('Audio 1 playback interrupted or cancelled (benign):', err.message);
-        } else {
-          console.error('Audio 1 playback failed:', err);
+    if (!audio1Ref.current) return;
+
+    try {
+      // Set volume to 100% and un-mute
+      audio1Ref.current.volume = 1;
+      audio1Ref.current.muted = false;
+
+      const playPromise = audio1Ref.current.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
+      // Lock permanently in localStorage and Firestore for this candidate account
+      localStorage.setItem(getAudio1Key(), 'true');
+      setAudio1State('playing');
+
+      if (candidateId) {
+        candidateService.recordAudioPlayed(candidateId, 'audio1').catch((err) => {
+          console.warn('Failed to record audio1 playback:', err);
+        });
+        if (onAudioPlayed) {
+          onAudioPlayed('audio1');
         }
-      });
+      }
+    } catch (err: any) {
+      if (err && (err.name === 'AbortError' || err.message?.includes('interrupted') || err.message?.includes('removed'))) {
+        console.warn('Audio 1 playback interrupted (benign):', err.message);
+      } else {
+        console.error('Audio 1 playback failed:', err);
+        // If proxy failed, toggle fallback to direct URL
+        if (!audio1UsingFallback && audio1Url) {
+          setAudio1UsingFallback(true);
+          setAudio1ErrorMsg('Đang chuyển đổi phương thức phát âm thanh dự phòng...');
+          setTimeout(() => {
+            if (audio1Ref.current) {
+              audio1Ref.current.load();
+              audio1Ref.current.play().then(() => {
+                localStorage.setItem(getAudio1Key(), 'true');
+                setAudio1State('playing');
+                setAudio1ErrorMsg(null);
+                if (candidateId) {
+                  candidateService.recordAudioPlayed(candidateId, 'audio1').catch(() => {});
+                  if (onAudioPlayed) {
+                    onAudioPlayed('audio1');
+                  }
+                }
+              }).catch((e2) => {
+                setAudio1ErrorMsg('Không thể phát âm thanh: ' + (e2.message || 'Vui lòng kiểm tra quyền âm thanh của trình duyệt hoặc bấm Thử lại.'));
+                setAudio1State('idle');
+              });
+            }
+          }, 300);
+        } else {
+          setAudio1ErrorMsg('Trình duyệt đã chặn âm thanh hoặc file nghe không tải được. Vui lòng bấm vào đây để thử lại.');
+          setAudio1State('idle');
+        }
+      }
     }
   };
 
-  const handlePlayAudio2 = () => {
+  const handlePlayAudio2 = async () => {
     if (audio2State !== 'idle') return;
-    
-    // Lock immediately to prevent re-triggering ever again
-    localStorage.setItem(getAudio2Key(), 'true');
-    setAudio2State('playing');
+    setAudio2ErrorMsg(null);
 
-    if (audio2Ref.current) {
-      audio2Ref.current.play().catch((err) => {
-        if (err && (err.name === 'AbortError' || err.message?.includes('interrupted') || err.message?.includes('removed'))) {
-          console.warn('Audio 2 playback interrupted or cancelled (benign):', err.message);
-        } else {
-          console.error('Audio 2 playback failed:', err);
+    if (!audio2Ref.current) return;
+
+    try {
+      audio2Ref.current.volume = 1;
+      audio2Ref.current.muted = false;
+
+      const playPromise = audio2Ref.current.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
+      localStorage.setItem(getAudio2Key(), 'true');
+      setAudio2State('playing');
+
+      if (candidateId) {
+        candidateService.recordAudioPlayed(candidateId, 'audio2').catch((err) => {
+          console.warn('Failed to record audio2 playback:', err);
+        });
+        if (onAudioPlayed) {
+          onAudioPlayed('audio2');
         }
-      });
+      }
+    } catch (err: any) {
+      if (err && (err.name === 'AbortError' || err.message?.includes('interrupted') || err.message?.includes('removed'))) {
+        console.warn('Audio 2 playback interrupted (benign):', err.message);
+      } else {
+        console.error('Audio 2 playback failed:', err);
+        if (!audio2UsingFallback && audio2Url) {
+          setAudio2UsingFallback(true);
+          setAudio2ErrorMsg('Đang chuyển đổi phương thức phát âm thanh dự phòng...');
+          setTimeout(() => {
+            if (audio2Ref.current) {
+              audio2Ref.current.load();
+              audio2Ref.current.play().then(() => {
+                localStorage.setItem(getAudio2Key(), 'true');
+                setAudio2State('playing');
+                setAudio2ErrorMsg(null);
+                if (candidateId) {
+                  candidateService.recordAudioPlayed(candidateId, 'audio2').catch(() => {});
+                  if (onAudioPlayed) {
+                    onAudioPlayed('audio2');
+                  }
+                }
+              }).catch((e2) => {
+                setAudio2ErrorMsg('Không thể phát âm thanh: ' + (e2.message || 'Vui lòng kiểm tra quyền âm thanh trình duyệt.'));
+                setAudio2State('idle');
+              });
+            }
+          }, 300);
+        } else {
+          setAudio2ErrorMsg('Trình duyệt đã chặn âm thanh hoặc file nghe không tải được. Vui lòng bấm vào đây để thử lại.');
+          setAudio2State('idle');
+        }
+      }
     }
   };
 
   const handleAudio1TimeUpdate = () => {
     if (audio1Ref.current) {
-      const prog = (audio1Ref.current.currentTime / audio1Ref.current.duration) * 100;
+      const cur = audio1Ref.current.currentTime || 0;
+      const dur = audio1Ref.current.duration || 0;
+      setAudio1CurrentTime(cur);
+      setAudio1Duration(dur);
+      const prog = dur > 0 ? (cur / dur) * 100 : 0;
       setAudio1Progress(prog || 0);
     }
   };
@@ -232,11 +401,21 @@ export default function ListeningSection({
   const handleAudio1Ended = () => {
     setAudio1State('ended');
     localStorage.setItem(getAudio1Key(), 'true');
+    if (candidateId) {
+      candidateService.recordAudioPlayed(candidateId, 'audio1').catch(() => {});
+      if (onAudioPlayed) {
+        onAudioPlayed('audio1');
+      }
+    }
   };
 
   const handleAudio2TimeUpdate = () => {
     if (audio2Ref.current) {
-      const prog = (audio2Ref.current.currentTime / audio2Ref.current.duration) * 100;
+      const cur = audio2Ref.current.currentTime || 0;
+      const dur = audio2Ref.current.duration || 0;
+      setAudio2CurrentTime(cur);
+      setAudio2Duration(dur);
+      const prog = dur > 0 ? (cur / dur) * 100 : 0;
       setAudio2Progress(prog || 0);
     }
   };
@@ -244,17 +423,63 @@ export default function ListeningSection({
   const handleAudio2Ended = () => {
     setAudio2State('ended');
     localStorage.setItem(getAudio2Key(), 'true');
+    if (candidateId) {
+      candidateService.recordAudioPlayed(candidateId, 'audio2').catch(() => {});
+      if (onAudioPlayed) {
+        onAudioPlayed('audio2');
+      }
+    }
   };
+
+  const audio1ActualSrc = audio1UsingFallback ? audio1Url : getProxiedUrl(audio1Url);
+  const audio2ActualSrc = audio2UsingFallback ? audio2Url : getProxiedUrl(audio2Url);
 
   return (
     <div id="listening-section-wrapper" className="space-y-6">
       
-      {/* Strict Warning Alert banner */}
-      <div className="bg-red-55 text-red-900 border-l-4 border-red-600 p-4 rounded-r-xl flex items-start gap-3 shadow-sm">
-        <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-        <p className="text-red-950 text-xs font-semibold leading-relaxed">
-          <strong className="uppercase">CHÚ Ý QUAN TRỌNG:</strong> Thí sinh <strong className="underline">CHỈ ĐƯỢC NGHE 1 LẦN DUY NHẤT</strong>. Khi đã nhấn Play hoặc audio đã bắt đầu chạy, bạn sẽ không thể tua lại, không thể Pause và không thể nghe lại dù có reload hay đăng nhập lại. Vui lòng kiểm tra kỹ thiết bị âm thanh trước khi nhấn phát.
-        </p>
+      {/* Strict Warning Alert & Sound Check banner */}
+      <div className="bg-gradient-to-r from-red-50 to-amber-50 text-red-950 border-l-4 border-red-600 p-4.5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm border border-red-100">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-red-950 text-xs font-bold leading-relaxed">
+              <strong className="uppercase">CHÚ Ý QUAN TRỌNG:</strong> Thí sinh <strong className="underline">CHỈ ĐƯỢC NGHE 1 LẦN DUY NHẤT</strong>. Khi đã nhấn Play, audio sẽ phát liên tục đến hết.
+            </p>
+            <p className="text-[11px] text-red-800/80 mt-0.5">
+              Vui lòng bấm nút <strong>"Kiểm tra loa / tai nghe"</strong> bên cạnh để đảm bảo thiết bị có âm thanh trước khi bấm làm bài.
+            </p>
+          </div>
+        </div>
+
+        {/* Sound check test button */}
+        <div className="shrink-0 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleTestSpeaker}
+            disabled={testSoundPlaying}
+            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm ${
+              testSoundPlaying
+                ? 'bg-amber-500 text-white animate-pulse'
+                : soundTestSuccess
+                ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                : 'bg-indigo-900 hover:bg-indigo-850 text-white'
+            }`}
+          >
+            {testSoundPlaying ? (
+              <>
+                <Volume2 className="w-3.5 h-3.5 animate-bounce" /> ĐANG PHÁT TIẾNG CHUÔNG...
+              </>
+            ) : soundTestSuccess ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5" /> ÂM THANH HOẠT ĐỘNG TỐT 🔊
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-3.5 h-3.5" /> KIỂM TRA LOA / TAI NGHE 🔊
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -264,7 +489,7 @@ export default function ListeningSection({
           
           {/* ================= BÀI 1 SECTION ================= */}
           {questionsPart1 && questionsPart1.length > 0 && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
                   <Headphones className="w-5 h-5 text-indigo-900" />
@@ -277,49 +502,84 @@ export default function ListeningSection({
 
               {/* Audio 1 Control Panel */}
               {audio1Url && audio1Url !== '' ? (
-                <div className="p-5 rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/65 shadow-inner">
+                <div className="p-5 rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/65 shadow-inner space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start gap-3">
                       <div className="w-10 h-10 rounded-full bg-indigo-900 text-white flex items-center justify-center shrink-0 shadow-sm">
                         <Volume2 className="w-5 h-5" />
                       </div>
                       <div>
-                        <h4 className="font-extrabold text-slate-800 text-sm">Audio Clip 01</h4>
+                        <h4 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                          Audio Clip 01
+                          {audio1State === 'playing' && (
+                            <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                              {formatSeconds(audio1CurrentTime)} / {formatSeconds(audio1Duration)}
+                            </span>
+                          )}
+                        </h4>
                         <p className="text-[11px] text-slate-500 font-medium leading-none mt-1">Audio can only be played ONCE. Please listen carefully.</p>
                       </div>
                     </div>
 
                     <audio
                       ref={audio1Ref}
-                      src={getProxiedUrl(audio1Url)}
+                      src={audio1ActualSrc}
                       onTimeUpdate={handleAudio1TimeUpdate}
                       onEnded={handleAudio1Ended}
+                      onLoadedMetadata={handleAudio1TimeUpdate}
+                      onError={() => {
+                        if (!audio1UsingFallback && audio1Url) {
+                          setAudio1UsingFallback(true);
+                        }
+                      }}
                       preload="auto"
                       referrerPolicy="no-referrer"
                       controlsList="nodownload"
                     />
 
-                    <button
-                      id="play-audio1-btn"
-                      onClick={handlePlayAudio1}
-                      disabled={audio1State !== 'idle'}
-                      className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-sm cursor-pointer select-none transition-all sm:w-auto w-full justify-center ${
-                        audio1State === 'idle'
-                          ? 'bg-indigo-900 hover:bg-indigo-850 text-white'
-                          : audio1State === 'playing'
-                          ? 'bg-emerald-600 text-white animate-pulse'
-                          : 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
-                      }`}
-                    >
-                      {audio1State === 'idle' && <><Play className="w-3.5 h-3.5 fill-current" /> PLAY AUDIO 1</>}
-                      {audio1State === 'playing' && <><Volume2 className="w-3.5 h-3.5 animate-bounce" /> LISTENING...</>}
-                      {audio1State === 'ended' && <>AUDIO PLAYED (BLOCKED)</>}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        id="play-audio1-btn"
+                        onClick={handlePlayAudio1}
+                        disabled={audio1State !== 'idle'}
+                        className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-sm cursor-pointer select-none transition-all sm:w-auto w-full justify-center ${
+                          audio1State === 'idle'
+                            ? 'bg-indigo-900 hover:bg-indigo-850 text-white'
+                            : audio1State === 'playing'
+                            ? 'bg-emerald-600 text-white animate-pulse'
+                            : 'bg-slate-200 text-slate-500 cursor-not-allowed shadow-none border border-slate-300'
+                        }`}
+                      >
+                        {audio1State === 'idle' && <><Play className="w-3.5 h-3.5 fill-current" /> PLAY AUDIO 1</>}
+                        {audio1State === 'playing' && <><Volume2 className="w-3.5 h-3.5 animate-bounce" /> ĐANG PHÁT AUDIO 1...</>}
+                        {audio1State === 'ended' && <><Lock className="w-3.5 h-3.5 text-slate-400" /> ĐÃ HOÀN THÀNH (KHÓA AUDIO 1)</>}
+                      </button>
+                    </div>
                   </div>
+
+                  {audio1State === 'ended' && (
+                    <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5 pt-1">
+                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>Bài Audio 1 đã phát xong và được khóa lại theo quy chế thi. Mỗi tài khoản chỉ được nghe 01 lần duy nhất trong kỳ thi.</span>
+                    </p>
+                  )}
+
+                  {audio1ErrorMsg && (
+                    <div className="p-3 bg-red-100 text-red-900 text-xs rounded-xl flex items-center justify-between">
+                      <span>⚠️ {audio1ErrorMsg}</span>
+                      <button
+                        type="button"
+                        onClick={handlePlayAudio1}
+                        className="bg-red-700 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer hover:bg-red-800"
+                      >
+                        Thử lại
+                      </button>
+                    </div>
+                  )}
 
                   {/* Progress bar */}
                   {audio1State === 'playing' && (
-                    <div className="mt-3 w-full bg-slate-200/85 rounded-full h-1.5 overflow-hidden">
+                    <div className="w-full bg-slate-200/85 rounded-full h-1.5 overflow-hidden">
                       <div className="bg-indigo-900 h-1.5 transition-all duration-300" style={{ width: `${audio1Progress}%` }} />
                     </div>
                   )}
@@ -471,49 +731,84 @@ export default function ListeningSection({
 
               {/* Audio 2 Control Panel */}
               {audio2Url && audio2Url !== '' ? (
-                <div className="p-5 rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/65 shadow-inner">
+                <div className="p-5 rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/65 shadow-inner space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start gap-3">
                       <div className="w-10 h-10 rounded-full bg-indigo-900 text-white flex items-center justify-center shrink-0 shadow-sm">
                         <Volume2 className="w-5 h-5" />
                       </div>
                       <div>
-                        <h4 className="font-extrabold text-slate-800 text-sm">Audio Clip 02</h4>
+                        <h4 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                          Audio Clip 02
+                          {audio2State === 'playing' && (
+                            <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                              {formatSeconds(audio2CurrentTime)} / {formatSeconds(audio2Duration)}
+                            </span>
+                          )}
+                        </h4>
                         <p className="text-[11px] text-slate-500 font-medium leading-none mt-1">Audio can only be played ONCE. Please listen carefully.</p>
                       </div>
                     </div>
 
                     <audio
                       ref={audio2Ref}
-                      src={getProxiedUrl(audio2Url)}
+                      src={audio2ActualSrc}
                       onTimeUpdate={handleAudio2TimeUpdate}
                       onEnded={handleAudio2Ended}
+                      onLoadedMetadata={handleAudio2TimeUpdate}
+                      onError={() => {
+                        if (!audio2UsingFallback && audio2Url) {
+                          setAudio2UsingFallback(true);
+                        }
+                      }}
                       preload="auto"
                       referrerPolicy="no-referrer"
                       controlsList="nodownload"
                     />
 
-                    <button
-                      id="play-audio2-btn"
-                      onClick={handlePlayAudio2}
-                      disabled={audio2State !== 'idle'}
-                      className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-sm cursor-pointer select-none transition-all sm:w-auto w-full justify-center ${
-                        audio2State === 'idle'
-                          ? 'bg-indigo-900 hover:bg-indigo-850 text-white'
-                          : audio2State === 'playing'
-                          ? 'bg-emerald-600 text-white animate-pulse'
-                          : 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
-                      }`}
-                    >
-                      {audio2State === 'idle' && <><Play className="w-3.5 h-3.5 fill-current" /> PLAY AUDIO 2</>}
-                      {audio2State === 'playing' && <><Volume2 className="w-3.5 h-3.5 animate-bounce" /> LISTENING...</>}
-                      {audio2State === 'ended' && <>AUDIO PLAYED (BLOCKED)</>}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        id="play-audio2-btn"
+                        onClick={handlePlayAudio2}
+                        disabled={audio2State !== 'idle'}
+                        className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-sm cursor-pointer select-none transition-all sm:w-auto w-full justify-center ${
+                          audio2State === 'idle'
+                            ? 'bg-indigo-900 hover:bg-indigo-850 text-white'
+                            : audio2State === 'playing'
+                            ? 'bg-emerald-600 text-white animate-pulse'
+                            : 'bg-slate-200 text-slate-500 cursor-not-allowed shadow-none border border-slate-300'
+                        }`}
+                      >
+                        {audio2State === 'idle' && <><Play className="w-3.5 h-3.5 fill-current" /> PLAY AUDIO 2</>}
+                        {audio2State === 'playing' && <><Volume2 className="w-3.5 h-3.5 animate-bounce" /> ĐANG PHÁT AUDIO 2...</>}
+                        {audio2State === 'ended' && <><Lock className="w-3.5 h-3.5 text-slate-400" /> ĐÃ HOÀN THÀNH (KHÓA AUDIO 2)</>}
+                      </button>
+                    </div>
                   </div>
+
+                  {audio2State === 'ended' && (
+                    <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5 pt-1">
+                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>Bài Audio 2 đã phát xong và được khóa lại theo quy chế thi. Mỗi tài khoản chỉ được nghe 01 lần duy nhất trong kỳ thi.</span>
+                    </p>
+                  )}
+
+                  {audio2ErrorMsg && (
+                    <div className="p-3 bg-red-100 text-red-900 text-xs rounded-xl flex items-center justify-between">
+                      <span>⚠️ {audio2ErrorMsg}</span>
+                      <button
+                        type="button"
+                        onClick={handlePlayAudio2}
+                        className="bg-red-700 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer hover:bg-red-800"
+                      >
+                        Thử lại
+                      </button>
+                    </div>
+                  )}
 
                   {/* Progress bar */}
                   {audio2State === 'playing' && (
-                    <div className="mt-3 w-full bg-slate-200/85 rounded-full h-1.5 overflow-hidden">
+                    <div className="w-full bg-slate-200/85 rounded-full h-1.5 overflow-hidden">
                       <div className="bg-indigo-900 h-1.5 transition-all duration-300" style={{ width: `${audio2Progress}%` }} />
                     </div>
                   )}

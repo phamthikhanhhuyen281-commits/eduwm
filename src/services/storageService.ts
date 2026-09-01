@@ -94,7 +94,7 @@ export const storageService = {
       
       const uploadPromise = uploadBytes(fileRef, file).then(snap => getDownloadURL(snap.ref));
       const timeoutPromise = new Promise<string>((_, reject) => 
-        setTimeout(() => reject(new Error('Firebase Storage timeout')), 4000)
+        setTimeout(() => reject(new Error('Firebase Storage timeout')), 15000)
       );
 
       const downloadUrl = await Promise.race([uploadPromise, timeoutPromise]);

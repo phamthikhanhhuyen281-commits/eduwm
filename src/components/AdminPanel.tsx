@@ -263,6 +263,16 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   const [qbCorrectAnswer, setQbCorrectAnswer] = useState<string>('A');
   const [qbPassage, setQbPassage] = useState<string>('');
 
+  // Bulk Selection States
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [isBulkDeletingCandidates, setIsBulkDeletingCandidates] = useState(false);
+
+  const [selectedExamIds, setSelectedExamIds] = useState<string[]>([]);
+  const [isBulkDeletingExams, setIsBulkDeletingExams] = useState(false);
+
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [isBulkDeletingMaterials, setIsBulkDeletingMaterials] = useState(false);
+
   // Custom alert action
   const showAlert = (title: string, message: string, type: 'success' | 'error') => {
     setAlertConfig({
@@ -382,10 +392,67 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
     try {
       await examService.deleteExam(id);
+      setSelectedExamIds((prev) => prev.filter((item) => item !== id));
       showAlert('Đã xóa', 'Xóa đề thi thành công!', 'success');
       fetchExams();
     } catch (err: any) {
       showAlert('Thất bại', err.message, 'error');
+    }
+  };
+
+  const handleToggleSelectExam = (id: string) => {
+    if (id === 'default-exam') return;
+    setSelectedExamIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllExams = () => {
+    const deletable = exams.filter((e) => e.id !== 'default-exam');
+    const allIds = deletable.map((e) => e.id);
+    const isAllSelected = allIds.length > 0 && allIds.every((id) => selectedExamIds.includes(id));
+    if (isAllSelected) {
+      setSelectedExamIds([]);
+    } else {
+      setSelectedExamIds(allIds);
+    }
+  };
+
+  const handleBulkDeleteExams = async () => {
+    if (selectedExamIds.length === 0) return;
+    const count = selectedExamIds.length;
+    if (!window.confirm(`Bạn có chắc chắn muốn XÓA VĨNH VIỄN ${count} đề thi đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.`)) {
+      return;
+    }
+
+    setIsBulkDeletingExams(true);
+    try {
+      let successCount = 0;
+      for (const id of selectedExamIds) {
+        if (id === 'default-exam') continue;
+        try {
+          await examService.deleteExam(id);
+          successCount++;
+          if (editingExamId === id) {
+            setEditingExamId(null);
+            setExamTitle('');
+            setExamDesc('');
+            setExamDuration(45);
+            setExamAudio1Url('');
+            setExamAudio2Url('');
+            setExamQuestionsJson('');
+          }
+        } catch (e) {
+          console.error(`Error deleting exam ${id}:`, e);
+        }
+      }
+      setSelectedExamIds([]);
+      showAlert('Thành công', `Đã xóa thành công ${successCount} đề thi!`, 'success');
+      await fetchExams();
+    } catch (err: any) {
+      showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt đề thi.', 'error');
+    } finally {
+      setIsBulkDeletingExams(false);
     }
   };
 
@@ -1348,6 +1415,53 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     setShowConfirmModal(true);
   };
 
+  const handleToggleSelectCandidate = (id: string) => {
+    setSelectedCandidateIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllCandidates = () => {
+    const allFilteredIds = filteredCandidates.map((c) => c.id);
+    const isAllSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedCandidateIds.includes(id));
+    if (isAllSelected) {
+      setSelectedCandidateIds((prev) => prev.filter((id) => !allFilteredIds.includes(id)));
+    } else {
+      setSelectedCandidateIds((prev) => Array.from(new Set([...prev, ...allFilteredIds])));
+    }
+  };
+
+  const handleBulkDeleteCandidates = async () => {
+    if (selectedCandidateIds.length === 0) return;
+    const count = selectedCandidateIds.length;
+    if (!window.confirm(`Bạn có chắc chắn muốn XÓA VĨNH VIỄN ${count} thí sinh đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.`)) {
+      return;
+    }
+
+    setIsBulkDeletingCandidates(true);
+    try {
+      let successCount = 0;
+      for (const id of selectedCandidateIds) {
+        try {
+          await candidateService.deleteCandidate(id);
+          successCount++;
+          if (selectedCandidate && selectedCandidate.id === id) {
+            handleCloseDetail();
+          }
+        } catch (e) {
+          console.error(`Error deleting candidate ${id}:`, e);
+        }
+      }
+      setSelectedCandidateIds([]);
+      showAlert('Thành công', `Đã xóa thành công ${successCount} thí sinh khỏi hệ thống!`, 'success');
+      await fetchCandidates();
+    } catch (err: any) {
+      showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt thí sinh.', 'error');
+    } finally {
+      setIsBulkDeletingCandidates(false);
+    }
+  };
+
   const handleResetCandidate = (id: string, name: string) => {
     setConfirmModalConfig({ type: 'reset', id, name });
     setShowConfirmModal(true);
@@ -1510,6 +1624,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
     try {
       await materialService.deleteMaterial(id);
+      setSelectedMaterialIds((prev) => prev.filter((item) => item !== id));
       await fetchMaterials();
       
       setAlertConfig({
@@ -1526,6 +1641,50 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
         message: e.message || 'Có lỗi xảy ra khi xóa tài liệu.',
         type: 'error'
       });
+    }
+  };
+
+  const handleToggleSelectMaterial = (id: string) => {
+    setSelectedMaterialIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllMaterials = (filteredList: any[]) => {
+    const allFilteredIds = filteredList.map((m) => m.id);
+    const isAllSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedMaterialIds.includes(id));
+    if (isAllSelected) {
+      setSelectedMaterialIds((prev) => prev.filter((id) => !allFilteredIds.includes(id)));
+    } else {
+      setSelectedMaterialIds((prev) => Array.from(new Set([...prev, ...allFilteredIds])));
+    }
+  };
+
+  const handleBulkDeleteMaterials = async () => {
+    if (selectedMaterialIds.length === 0) return;
+    const count = selectedMaterialIds.length;
+    if (!window.confirm(`Bạn có chắc chắn muốn XÓA ${count} tài liệu đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.`)) {
+      return;
+    }
+
+    setIsBulkDeletingMaterials(true);
+    try {
+      let successCount = 0;
+      for (const id of selectedMaterialIds) {
+        try {
+          await materialService.deleteMaterial(id);
+          successCount++;
+        } catch (e) {
+          console.error(`Error deleting material ${id}:`, e);
+        }
+      }
+      setSelectedMaterialIds([]);
+      showAlert('Thành công', `Đã xóa thành công ${successCount} tài liệu!`, 'success');
+      await fetchMaterials();
+    } catch (err: any) {
+      showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt tài liệu.', 'error');
+    } finally {
+      setIsBulkDeletingMaterials(false);
     }
   };
 
@@ -1942,9 +2101,25 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
             {/* Column 2: Materials List */}
             <div className="lg:col-span-7 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100">
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                  <span>Danh sách tài liệu ({materials.length})</span>
-                </h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                    <span>Danh sách tài liệu ({materials.length})</span>
+                  </h3>
+                  {filteredAdminMaterials.length > 0 && (
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer select-none ml-2">
+                      <input
+                        type="checkbox"
+                        checked={
+                          filteredAdminMaterials.length > 0 &&
+                          filteredAdminMaterials.every((m) => selectedMaterialIds.includes(m.id))
+                        }
+                        onChange={() => handleSelectAllMaterials(filteredAdminMaterials)}
+                        className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
+                      />
+                      <span>Chọn tất cả ({filteredAdminMaterials.length})</span>
+                    </label>
+                  )}
+                </div>
 
                 {/* Search box */}
                 <div className="relative w-full sm:w-60">
@@ -1958,6 +2133,43 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                   />
                 </div>
               </div>
+
+              {/* Bulk Action Bar for Materials */}
+              {selectedMaterialIds.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-rose-50 border border-rose-200 rounded-2xl p-3 text-xs animate-fadeIn">
+                  <span className="font-bold text-rose-900 flex items-center gap-1.5">
+                    <Trash2 className="w-4 h-4 text-rose-600" />
+                    Đã chọn {selectedMaterialIds.length} tài liệu
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMaterialIds([])}
+                      className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl font-bold cursor-pointer transition-colors text-xs"
+                    >
+                      Bỏ chọn
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBulkDeletingMaterials}
+                      onClick={handleBulkDeleteMaterials}
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white rounded-xl font-bold cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm text-xs"
+                    >
+                      {isBulkDeletingMaterials ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
+                          Đang xóa...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Xóa {selectedMaterialIds.length} tài liệu đã chọn
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Filter pills */}
               <div className="flex flex-wrap gap-1.5">
@@ -1995,8 +2207,22 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                   {filteredAdminMaterials.map((m) => (
                     <div
                       key={m.id}
-                      className="py-4 first:pt-0 last:pb-0 flex justify-between items-start gap-4 hover:bg-slate-50/70 p-3 rounded-2xl transition-colors group"
+                      className={`py-4 first:pt-0 last:pb-0 flex justify-between items-start gap-3 p-3 rounded-2xl transition-colors group ${
+                        selectedMaterialIds.includes(m.id)
+                          ? 'bg-indigo-50/80 border border-indigo-200'
+                          : 'hover:bg-slate-50/70 border border-transparent'
+                      }`}
                     >
+                      <div className="pt-2 shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={selectedMaterialIds.includes(m.id)}
+                          onChange={() => handleToggleSelectMaterial(m.id)}
+                          className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
+                          title="Chọn tài liệu này để xóa"
+                        />
+                      </div>
+
                       <div
                         onClick={() => handleOpenAdminPreview(m)}
                         className="flex gap-3 min-w-0 cursor-pointer flex-grow"
@@ -2996,7 +3222,58 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
               <h3 className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">
                 <span>DANH SÁCH ĐỀ THI ({exams.length})</span>
               </h3>
+              {exams.filter(e => e.id !== 'default-exam').length > 0 && (
+                <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={
+                      exams.filter(e => e.id !== 'default-exam').length > 0 &&
+                      exams.filter(e => e.id !== 'default-exam').every(e => selectedExamIds.includes(e.id))
+                    }
+                    onChange={handleSelectAllExams}
+                    className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
+                  />
+                  <span>Chọn tất cả</span>
+                </label>
+              )}
             </div>
+
+            {/* Bulk Action Bar for Exams */}
+            {selectedExamIds.length > 0 && (
+              <div className="flex flex-col gap-2 bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs animate-fadeIn">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-rose-900 flex items-center gap-1.5">
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                    Đã chọn {selectedExamIds.length} đề thi
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedExamIds([])}
+                    className="text-[11px] text-slate-600 hover:text-slate-900 font-bold underline cursor-pointer"
+                  >
+                    Bỏ chọn
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  disabled={isBulkDeletingExams}
+                  onClick={handleBulkDeleteExams}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white rounded-lg font-bold cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm text-xs"
+                >
+                  {isBulkDeletingExams ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
+                      Đang xóa...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Xóa {selectedExamIds.length} đề thi đã chọn
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
 
             {/* Create New Button */}
             <button
@@ -3029,6 +3306,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
               <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1">
                 {exams.map((ex) => {
                   const isSelected = editingExamId === ex.id;
+                  const isChecked = selectedExamIds.includes(ex.id);
                   const qCount = 
                     (ex.questions?.listeningPart1?.length || 0) +
                     (ex.questions?.listeningPart2?.length || 0) +
@@ -3045,13 +3323,27 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                     <div 
                       key={ex.id} 
                       onClick={() => handleSelectEditExam(ex)}
-                      className={`p-4 border rounded-xl transition-all cursor-pointer relative ${
-                        isSelected 
-                          ? 'border-indigo-950 bg-indigo-50/40 ring-1 ring-indigo-950 shadow-sm' 
-                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                      className={`p-4 border rounded-xl transition-all cursor-pointer relative flex gap-3 items-start ${
+                        isChecked
+                          ? 'border-rose-400 bg-rose-50/40 ring-1 ring-rose-300'
+                          : isSelected 
+                            ? 'border-indigo-950 bg-indigo-50/40 ring-1 ring-indigo-950 shadow-sm' 
+                            : 'border-slate-200 bg-white hover:bg-slate-50'
                       }`}
                     >
-                      <div className="pr-10">
+                      {ex.id !== 'default-exam' && (
+                        <div className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleSelectExam(ex.id)}
+                            className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
+                            title="Chọn đề thi này để xóa"
+                          />
+                        </div>
+                      )}
+
+                      <div className="pr-10 flex-grow min-w-0">
                         <div className="flex items-center gap-1.5 mb-1">
                           <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">{ex.title}</h4>
                           {isSelected && (
@@ -3576,6 +3868,43 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                 </div>
               </div>
 
+              {/* Bulk Action Bar for Candidates */}
+              {selectedCandidateIds.length > 0 && (
+                <div className="w-full flex flex-wrap items-center justify-between gap-2 bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs mb-4 animate-fadeIn">
+                  <span className="font-bold text-rose-900 flex items-center gap-1.5">
+                    <Trash2 className="w-4 h-4 text-rose-600" />
+                    Đã chọn {selectedCandidateIds.length} thí sinh
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCandidateIds([])}
+                      className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl font-bold cursor-pointer transition-colors text-xs"
+                    >
+                      Bỏ chọn
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBulkDeletingCandidates}
+                      onClick={handleBulkDeleteCandidates}
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white rounded-xl font-bold cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm text-xs"
+                    >
+                      {isBulkDeletingCandidates ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
+                          Đang xóa...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Xóa {selectedCandidateIds.length} thí sinh đã chọn
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Candidates Table List */}
               <div className="overflow-x-auto select-none">
                 {filteredCandidates.length === 0 ? (
@@ -3586,6 +3915,18 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-150 text-slate-500 font-bold uppercase tracking-wider">
+                        <th className="py-3 px-3 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={
+                              filteredCandidates.length > 0 &&
+                              filteredCandidates.every((c) => selectedCandidateIds.includes(c.id))
+                            }
+                            onChange={handleSelectAllCandidates}
+                            className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
+                            title="Chọn tất cả thí sinh"
+                          />
+                        </th>
                         <th className="py-3 px-4">Thí sinh</th>
                         <th className="py-3 px-4">Số điện thoại</th>
                         <th className="py-3 px-4">Kỳ thi tham gia</th>
@@ -3598,9 +3939,26 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                       {filteredCandidates.map((c) => {
                         const candExam = exams.find(e => e.id === (c.examId || 'default-exam'));
                         const isSubmitted = !!c.submittedAt;
+                        const isChecked = selectedCandidateIds.includes(c.id);
 
                         return (
-                          <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                          <tr 
+                            key={c.id} 
+                            className={`transition-colors ${
+                              isChecked 
+                                ? 'bg-rose-50/50 hover:bg-rose-50' 
+                                : 'hover:bg-slate-50/50'
+                            }`}
+                          >
+                            <td className="py-4 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleToggleSelectCandidate(c.id)}
+                                className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
+                                title="Chọn thí sinh này để xóa"
+                              />
+                            </td>
                             <td className="py-4 px-4">
                               <span className="font-bold text-slate-900 text-sm block">{c.fullName}</span>
                               <span className="text-[10px] text-slate-400 font-mono tracking-wide">ID: {c.id}</span>

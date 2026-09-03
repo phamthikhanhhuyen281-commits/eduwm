@@ -71,7 +71,7 @@ function normalizeString(str: string): string {
 }
 
 // Precise checker for fill-in-the-blank questions
-function checkAnswer(userAnswer: string, correctAnswer: string): boolean {
+export function checkAnswer(userAnswer: string, correctAnswer: string): boolean {
   if (!userAnswer) return false;
   const normUser = normalizeString(userAnswer);
   const normCorrect = normalizeString(correctAnswer);
@@ -106,17 +106,100 @@ function checkAnswer(userAnswer: string, correctAnswer: string): boolean {
   return normUser === normCorrect;
 }
 
+export function isAnswerSkipped(userAnswer: string | undefined, candidate?: any, questionId?: string): boolean {
+  if (userAnswer === '__SKIPPED__') return true;
+  if (candidate && questionId) {
+    const skippedMap = candidate.answers?.skippedQuestions || (candidate as any).skippedQuestions;
+    if (skippedMap && skippedMap[questionId]) return true;
+  }
+  return false;
+}
+
+export function getCandidateAnswer(candidate: Candidate | null | undefined, sectionKey: string, questionId: string): string {
+  if (!candidate || !candidate.answers) return '';
+  const a = candidate.answers as any;
+
+  // 1. Direct section check
+  if (a[sectionKey] && a[sectionKey][questionId] !== undefined) {
+    return String(a[sectionKey][questionId]);
+  }
+
+  // 2. Check all other standard section buckets
+  const standardSections = ['listeningPart1', 'listeningPart2', 'grammar', 'vocabulary', 'readingPartA', 'readingPartB', 'writing'];
+  for (const sec of standardSections) {
+    if (a[sec] && a[sec][questionId] !== undefined) {
+      return String(a[sec][questionId]);
+    }
+  }
+
+  // 3. Check flatAnswers or raw
+  if (a.flatAnswers && a.flatAnswers[questionId] !== undefined) {
+    return String(a.flatAnswers[questionId]);
+  }
+  if (a.raw && a.raw[questionId] !== undefined) {
+    return String(a.raw[questionId]);
+  }
+
+  // 4. Check if answers itself is flat key-value
+  if (a[questionId] !== undefined && typeof a[questionId] === 'string') {
+    return String(a[questionId]);
+  }
+
+  return '';
+}
+
+export function isAnswerCorrect(userAnswer: string | undefined, question: any): boolean {
+  if (!userAnswer || userAnswer === '__SKIPPED__') return false;
+  const user = userAnswer.trim();
+  const correct = (question?.answer || '').trim();
+  if (!user || !correct) return false;
+
+  // 1. Direct case-insensitive match (covers A/B/C/D, True/False/Not Given, exact words)
+  if (user.toUpperCase() === correct.toUpperCase()) {
+    return true;
+  }
+
+  // 2. If question is a blank / fill-in-the-blank question:
+  if (question.type === 'blank') {
+    return checkAnswer(user, correct);
+  }
+
+  // 3. If question has options (MCQ), check letter ('A', 'B'...) vs option text
+  if (Array.isArray(question.options) && question.options.length > 0) {
+    const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
+    
+    // User selected letter (e.g. 'B'), question.answer is the text of option B
+    const userLetterIdx = letters.indexOf(user.toUpperCase());
+    if (userLetterIdx >= 0 && userLetterIdx < question.options.length) {
+      const optText = (question.options[userLetterIdx] || '').trim();
+      if (optText.toUpperCase() === correct.toUpperCase()) {
+        return true;
+      }
+    }
+
+    // Question answer is a letter (e.g. 'B'), user submitted the text of option B
+    const correctLetterIdx = letters.indexOf(correct.toUpperCase());
+    if (correctLetterIdx >= 0 && correctLetterIdx < question.options.length) {
+      const optText = (question.options[correctLetterIdx] || '').trim();
+      if (user.toUpperCase() === optText.toUpperCase()) {
+        return true;
+      }
+    }
+
+    // Check if user answer matches option text and that option is the correct answer
+    for (let i = 0; i < question.options.length; i++) {
+      const opt = (question.options[i] || '').trim().toUpperCase();
+      if (opt === user.toUpperCase() && (letters[i] === correct.toUpperCase() || opt === correct.toUpperCase())) {
+        return true;
+      }
+    }
+  }
+
+  // 4. Fallback to fuzzy checkAnswer for text blanks
+  return checkAnswer(user, correct);
+}
+
 export function autoGradeCandidate(candidate: Candidate, exam: any): Candidate['scores'] {
-  const answers = candidate.answers || {
-    listeningPart1: {},
-    listeningPart2: {},
-    grammar: {},
-    vocabulary: {},
-    readingPartA: {},
-    readingPartB: {},
-    writing: {}
-  };
-  
   const listeningPart1 = exam?.questions?.listeningPart1 || [];
   const listeningPart2 = exam?.questions?.listeningPart2 || [];
   const grammarQuestions = exam?.questions?.grammar || [];
@@ -124,55 +207,54 @@ export function autoGradeCandidate(candidate: Candidate, exam: any): Candidate['
   const readingPartA = exam?.questions?.readingPassage?.questionsPartA || [];
   const readingPartB = exam?.questions?.readingPassage?.questionsPartB || [];
 
+  // 1. Listening Part 1
   let listeningScore = 0;
   listeningPart1.forEach((q: any) => {
-    const userAnswer = answers.listeningPart1?.[q.id];
-    if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
+    const userAnswer = getCandidateAnswer(candidate, 'listeningPart1', q.id);
+    if (isAnswerCorrect(userAnswer, q)) {
       listeningScore += 1;
     }
   });
 
+  // Listening Part 2
   listeningPart2.forEach((q: any) => {
-    const userAnswer = answers.listeningPart2?.[q.id];
-    if (userAnswer && checkAnswer(userAnswer, q.answer)) {
+    const userAnswer = getCandidateAnswer(candidate, 'listeningPart2', q.id);
+    if (isAnswerCorrect(userAnswer, q)) {
       listeningScore += 1;
     }
   });
 
+  // 2. Grammar
   let grammarScore = 0;
   grammarQuestions.forEach((q: any) => {
-    const userAnswer = answers.grammar?.[q.id];
-    if (userAnswer) {
-      if (q.type === 'mcq') {
-        if (userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
-          grammarScore += 1;
-        }
-      } else {
-        if (checkAnswer(userAnswer, q.answer)) {
-          grammarScore += 1;
-        }
-      }
+    const userAnswer = getCandidateAnswer(candidate, 'grammar', q.id);
+    if (isAnswerCorrect(userAnswer, q)) {
+      grammarScore += 1;
     }
   });
 
+  // 3. Vocabulary
   let vocabularyScore = 0;
   vocabularyQuestions.forEach((q: any) => {
-    const userAnswer = answers.vocabulary?.[q.id];
-    if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
+    const userAnswer = getCandidateAnswer(candidate, 'vocabulary', q.id);
+    if (isAnswerCorrect(userAnswer, q)) {
       vocabularyScore += 1;
     }
   });
 
+  // 4. Reading Part A
   let readingScore = 0;
   readingPartA.forEach((q: any) => {
-    const userAnswer = answers.readingPartA?.[q.id];
-    if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
+    const userAnswer = getCandidateAnswer(candidate, 'readingPartA', q.id);
+    if (isAnswerCorrect(userAnswer, q)) {
       readingScore += 1;
     }
   });
+
+  // Reading Part B
   readingPartB.forEach((q: any) => {
-    const userAnswer = answers.readingPartB?.[q.id];
-    if (userAnswer && userAnswer.trim().toUpperCase() === q.answer.toUpperCase()) {
+    const userAnswer = getCandidateAnswer(candidate, 'readingPartB', q.id);
+    if (isAnswerCorrect(userAnswer, q)) {
       readingScore += 1;
     }
   });
@@ -205,16 +287,46 @@ export function autoGradeCandidate(candidate: Candidate, exam: any): Candidate['
   };
 }
 
+export const normalizePhone = (phone?: string): string => {
+  return (phone || '').replace(/[\s\.\-\(\)]/g, '').trim();
+};
+
 export const candidateService = {
   async getCandidates(): Promise<Candidate[]> {
     try {
       const colRef = collection(db, 'candidates');
       const snap = await getDocs(colRef);
-      const list: Candidate[] = [];
+      const rawList: Candidate[] = [];
       snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as Candidate);
+        rawList.push({ id: d.id, ...d.data() } as Candidate);
       });
-      return list;
+
+      // Deduplicate candidates by (normalized phone + examId)
+      // If a candidate submitted an exam and also has an unsubmitted ghost record for that exam,
+      // keep the submitted one!
+      const deduplicatedMap = new Map<string, Candidate>();
+
+      // Sort so submitted records come first (newest submission first), followed by highest duration
+      rawList.sort((a, b) => {
+        if (a.submittedAt && !b.submittedAt) return -1;
+        if (!a.submittedAt && b.submittedAt) return 1;
+        if (a.submittedAt && b.submittedAt) {
+          return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+        }
+        return (b.durationSeconds || 0) - (a.durationSeconds || 0);
+      });
+
+      rawList.forEach((c) => {
+        const cleanPhone = normalizePhone(c.phone) || (c.phone ? c.phone.trim() : c.id);
+        const examKey = c.examId || 'default-exam';
+        const key = `${cleanPhone}__${examKey}`;
+
+        if (!deduplicatedMap.has(key)) {
+          deduplicatedMap.set(key, c);
+        }
+      });
+
+      return Array.from(deduplicatedMap.values());
     } catch (err) {
       console.error('Error listing candidates:', err);
       return [];
@@ -254,12 +366,13 @@ export const candidateService = {
 
   async checkIsPhoneLocked(phone: string): Promise<boolean> {
     try {
+      const cleanPhone = normalizePhone(phone);
       const colRef = collection(db, 'candidates');
-      const q = query(colRef, where('phone', '==', phone.trim()));
-      const snap = await getDocs(q);
+      const snap = await getDocs(colRef);
       let locked = false;
       snap.forEach((doc) => {
-        if (doc.data().isLocked) {
+        const data = doc.data() as Candidate;
+        if (normalizePhone(data.phone) === cleanPhone && data.isLocked) {
           locked = true;
         }
       });
@@ -272,12 +385,15 @@ export const candidateService = {
 
   async getCandidatesByPhone(phone: string): Promise<Candidate[]> {
     try {
+      const cleanPhone = normalizePhone(phone);
       const colRef = collection(db, 'candidates');
-      const q = query(colRef, where('phone', '==', phone.trim()));
-      const snap = await getDocs(q);
+      const snap = await getDocs(colRef);
       const list: Candidate[] = [];
       snap.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() } as Candidate);
+        const data = doc.data() as Candidate;
+        if (normalizePhone(data.phone) === cleanPhone) {
+          list.push({ id: doc.id, ...data });
+        }
       });
       return list;
     } catch (err) {
@@ -288,13 +404,21 @@ export const candidateService = {
 
   async getCandidateByPhoneAndExam(phone: string, examId: string): Promise<Candidate | null> {
     try {
-      const colRef = collection(db, 'candidates');
-      const q = query(colRef, where('phone', '==', phone.trim()), where('examId', '==', examId));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        return { id: snap.docs[0].id, ...snap.docs[0].data() } as Candidate;
-      }
-      return null;
+      const list = await this.getCandidatesByPhone(phone);
+      const targetExamId = examId || 'default-exam';
+      const matches = list.filter((c) => (c.examId || 'default-exam') === targetExamId);
+      if (matches.length === 0) return null;
+
+      // Prefer submitted candidate
+      matches.sort((a, b) => {
+        if (a.submittedAt && !b.submittedAt) return -1;
+        if (!a.submittedAt && b.submittedAt) return 1;
+        if (a.submittedAt && b.submittedAt) {
+          return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+        }
+        return (b.durationSeconds || 0) - (a.durationSeconds || 0);
+      });
+      return matches[0];
     } catch (err) {
       console.error('Error fetching candidate by phone and exam:', err);
       return null;
@@ -306,22 +430,46 @@ export const candidateService = {
     exam: any;
     restoredAnswers: Record<string, string>;
   }> {
-    const trimmedPhone = phone.trim();
-    const isLocked = await this.checkIsPhoneLocked(trimmedPhone);
+    const cleanPhone = normalizePhone(phone);
+    const targetExamId = examId || 'default-exam';
+
+    const isLocked = await this.checkIsPhoneLocked(cleanPhone);
     if (isLocked) {
       throw new Error('Số điện thoại này đã bị khóa trên hệ thống. Vui lòng liên hệ Giáo viên để được hỗ trợ.');
     }
 
-    const exam = await examService.getExamById(examId);
+    const exam = await examService.getExamById(targetExamId);
 
-    // Check if there is an existing candidate with this phone
-    const colRef = collection(db, 'candidates');
-    const q = query(colRef, where('phone', '==', trimmedPhone), where('examId', '==', examId));
-    const snap = await getDocs(q);
+    // Check if there is an existing candidate with this phone and this exam
+    const existingCandidates = await this.getCandidatesByPhone(cleanPhone);
+    const matchingDocs = existingCandidates.filter((c) => (c.examId || 'default-exam') === targetExamId);
     
-    if (!snap.empty) {
-      const existingDoc = snap.docs[0];
-      const existing = { id: existingDoc.id, ...existingDoc.data() } as Candidate;
+    if (matchingDocs.length > 0) {
+      // Prioritize submitted candidates (most recent submittedAt), then in-progress
+      matchingDocs.sort((a, b) => {
+        if (a.submittedAt && !b.submittedAt) return -1;
+        if (!a.submittedAt && b.submittedAt) return 1;
+        if (a.submittedAt && b.submittedAt) {
+          return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+        }
+        return (b.durationSeconds || 0) - (a.durationSeconds || 0);
+      });
+
+      const existing = matchingDocs[0];
+
+      // Auto-cleanup any unsubmitted duplicate ghost documents for this same exam
+      if (matchingDocs.length > 1) {
+        for (let i = 1; i < matchingDocs.length; i++) {
+          const duplicate = matchingDocs[i];
+          if (existing.submittedAt && !duplicate.submittedAt) {
+            try {
+              await deleteDoc(doc(db, 'candidates', duplicate.id));
+            } catch (err) {
+              console.warn('Failed to clean up duplicate candidate doc:', duplicate.id, err);
+            }
+          }
+        }
+      }
       
       if (existing.leftRoom) {
         throw new Error('Bạn đã tự ý rời khỏi phòng thi trước đó và không thể tiếp tục hoặc làm lại bài thi này trừ khi được Giáo viên khôi phục (Reset).');
@@ -371,8 +519,8 @@ export const candidateService = {
     const newCand: Candidate = {
       id,
       fullName: fullName.trim(),
-      phone: trimmedPhone,
-      examId,
+      phone: cleanPhone,
+      examId: targetExamId,
       registeredAt: new Date().toISOString(),
       startedAt: null,
       submittedAt: null,
@@ -476,7 +624,7 @@ export const candidateService = {
     };
   },
 
-  formatFlatAnswers(flatAnswers: Record<string, string>): Partial<Candidate['answers']> {
+  formatFlatAnswers(flatAnswers: Record<string, string>, exam?: any): Partial<Candidate['answers']> {
     const nested: any = {
       listeningPart1: {},
       listeningPart2: {},
@@ -487,36 +635,85 @@ export const candidateService = {
       writing: {},
       speakingPart1: {},
       speakingPart2: {},
+      flatAnswers: { ...flatAnswers },
+      raw: { ...flatAnswers }
     };
     
     if (!flatAnswers) return nested;
+
+    const examQ = exam?.questions;
 
     Object.entries(flatAnswers).forEach(([k, v]) => {
       const activeKey = k.startsWith('__NOTE__') ? k.replace('__NOTE__', '') : k;
       if (activeKey === 'speaking_p1') {
         nested.speakingPart1 = { audioPath: v };
+        return;
       } else if (activeKey === 'speaking_p2_q1') {
         nested.speakingPart2.sp_1_audioPath = v;
+        return;
       } else if (activeKey === 'speaking_p2_q2') {
         nested.speakingPart2.sp_2_audioPath = v;
+        return;
       } else if (activeKey === 'speaking_p2_q3') {
         nested.speakingPart2.sp_3_audioPath = v;
-      } else if (activeKey.startsWith('l1_')) {
+        return;
+      }
+
+      // 1. Direct match via exam question IDs
+      if (examQ) {
+        if (examQ.listeningPart1?.some((q: any) => q.id === activeKey)) {
+          nested.listeningPart1[k] = v;
+          return;
+        }
+        if (examQ.listeningPart2?.some((q: any) => q.id === activeKey)) {
+          nested.listeningPart2[k] = v;
+          return;
+        }
+        if (examQ.grammar?.some((q: any) => q.id === activeKey)) {
+          nested.grammar[k] = v;
+          return;
+        }
+        if (examQ.vocabulary?.some((q: any) => q.id === activeKey)) {
+          nested.vocabulary[k] = v;
+          return;
+        }
+        if (examQ.readingPassage?.questionsPartA?.some((q: any) => q.id === activeKey)) {
+          nested.readingPartA[k] = v;
+          return;
+        }
+        if (examQ.readingPassage?.questionsPartB?.some((q: any) => q.id === activeKey)) {
+          nested.readingPartB[k] = v;
+          return;
+        }
+        if (examQ.writingQuestions?.some((q: any) => q.id === activeKey)) {
+          nested.writing[k] = v;
+          return;
+        }
+      }
+
+      // 2. Prefix-based routing
+      if (activeKey.startsWith('l1_') || activeKey.startsWith('listening_p1') || activeKey.includes('l_part1')) {
         nested.listeningPart1[k] = v;
-      } else if (activeKey.startsWith('l2_')) {
+      } else if (activeKey.startsWith('l2_') || activeKey.startsWith('listening_p2') || activeKey.includes('l_part2')) {
         nested.listeningPart2[k] = v;
-      } else if (activeKey.startsWith('g_')) {
+      } else if (activeKey.startsWith('listening')) {
+        nested.listeningPart1[k] = v;
+      } else if (activeKey.startsWith('g_') || activeKey.startsWith('grammar')) {
         nested.grammar[k] = v;
-      } else if (activeKey.startsWith('v_')) {
+      } else if (activeKey.startsWith('v_') || activeKey.startsWith('vocabulary') || activeKey.startsWith('vocab')) {
         nested.vocabulary[k] = v;
-      } else if (activeKey.startsWith('r_')) {
-        const num = parseInt(activeKey.replace('r_', ''), 10);
-        if (num <= 2) {
+      } else if (activeKey.startsWith('r_part_a') || activeKey.startsWith('reading_p1')) {
+        nested.readingPartA[k] = v;
+      } else if (activeKey.startsWith('r_part_b') || activeKey.startsWith('reading_p2')) {
+        nested.readingPartB[k] = v;
+      } else if (activeKey.startsWith('r_') || activeKey.startsWith('reading')) {
+        const num = parseInt(activeKey.replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(num) && num <= 2) {
           nested.readingPartA[k] = v;
         } else {
           nested.readingPartB[k] = v;
         }
-      } else if (activeKey.startsWith('w_')) {
+      } else if (activeKey.startsWith('w_') || activeKey.startsWith('writing')) {
         nested.writing[k] = v;
       }
     });
@@ -534,16 +731,25 @@ export const candidateService = {
       return candidate;
     }
 
-    // Check if answersUpdate is a flat Record<string, string> or a structured partial Candidate['answers']
     let parsedUpdate = answersUpdate || {};
-    const isFlat = parsedUpdate && (
-      parsedUpdate.speaking_p1 !== undefined ||
-      parsedUpdate.speaking_p2_q1 !== undefined ||
-      Object.keys(parsedUpdate).some(k => k.startsWith('l1_') || k.startsWith('l2_') || k.startsWith('g_') || k.startsWith('v_') || k.startsWith('r_') || k.startsWith('w_'))
+    const hasStructuredBuckets = Boolean(
+      parsedUpdate.listeningPart1 ||
+      parsedUpdate.listeningPart2 ||
+      parsedUpdate.grammar ||
+      parsedUpdate.vocabulary ||
+      parsedUpdate.readingPartA ||
+      parsedUpdate.readingPartB
     );
 
-    if (isFlat) {
-      const converted = this.formatFlatAnswers(parsedUpdate);
+    let exam: any = null;
+    if (candidate.examId) {
+      try {
+        exam = await examService.getExamById(candidate.examId);
+      } catch (e) {}
+    }
+
+    if (!hasStructuredBuckets) {
+      const converted = this.formatFlatAnswers(parsedUpdate, exam);
       parsedUpdate = converted;
     }
 
@@ -557,7 +763,6 @@ export const candidateService = {
       speakingPart1: {
         ...(candidate.answers?.speakingPart1 || {}),
         ...(parsedUpdate.speakingPart1 || {}),
-        // Preserve existing audioPath if updated is null/empty
         audioPath: parsedUpdate.speakingPart1?.audioPath || candidate.answers?.speakingPart1?.audioPath || null
       },
       speakingPart2: {
@@ -567,7 +772,17 @@ export const candidateService = {
         sp_2_audioPath: parsedUpdate.speakingPart2?.sp_2_audioPath || candidate.answers?.speakingPart2?.sp_2_audioPath || null,
         sp_3_audioPath: parsedUpdate.speakingPart2?.sp_3_audioPath || candidate.answers?.speakingPart2?.sp_3_audioPath || null,
       },
-      writing: { ...(candidate.answers?.writing || {}), ...(parsedUpdate.writing || {}) }
+      writing: { ...(candidate.answers?.writing || {}), ...(parsedUpdate.writing || {}) },
+      flatAnswers: {
+        ...((candidate.answers as any)?.flatAnswers || {}),
+        ...(parsedUpdate.flatAnswers || {}),
+        ...(!hasStructuredBuckets ? answersUpdate : {})
+      },
+      raw: {
+        ...((candidate.answers as any)?.raw || {}),
+        ...(parsedUpdate.raw || {}),
+        ...(!hasStructuredBuckets ? answersUpdate : {})
+      }
     };
 
     const updates: any = { answers: mergedAnswers };
@@ -802,6 +1017,26 @@ export const candidateService = {
     candidate.submittedAt = submittedAt;
     candidate.logs = logs;
     candidate.scores = scores;
+
+    // Clean up any lingering unsubmitted duplicate documents for this candidate's phone and exam in Firestore
+    try {
+      const cleanPhone = normalizePhone(candidate.phone);
+      const candExamId = candidate.examId || 'default-exam';
+      const colRef = collection(db, 'candidates');
+      const snap = await getDocs(colRef);
+      snap.forEach(async (d) => {
+        if (d.id !== id) {
+          const data = d.data();
+          const p = normalizePhone(data.phone);
+          const exId = data.examId || 'default-exam';
+          if (p === cleanPhone && exId === candExamId && !data.submittedAt) {
+            try {
+              await deleteDoc(doc(db, 'candidates', d.id));
+            } catch (err) {}
+          }
+        }
+      });
+    } catch (err) {}
 
     // If Firestore could not be reached immediately, store in local backup queue to auto-sync
     if (!firestoreSaved) {

@@ -16,26 +16,37 @@ export default function QuestionNav({
   skippedQuestions
 }: QuestionNavProps) {
   const getStatusColorClass = (id: string) => {
-    const isAnswered = !!answers[id] && answers[id].trim() !== '';
-    const isSkipped = !!skippedQuestions[id];
+    const ans = answers[id];
+    const isSkipped = !!skippedQuestions[id] || ans === '__SKIPPED__';
+    const isAnswered = !!ans && ans.trim() !== '' && ans !== '__SKIPPED__';
 
-    if (isAnswered) {
-      return 'bg-green-500 text-white border-transparent';
-    }
     if (isSkipped) {
-      return 'bg-amber-100 text-amber-700 border-amber-200';
+      return 'bg-amber-400 text-amber-950 font-black border-amber-500 shadow-xs';
     }
-    return 'bg-slate-100 text-slate-400 border-transparent hover:bg-slate-200';
+    if (isAnswered) {
+      return 'bg-emerald-600 text-white font-bold border-transparent';
+    }
+    return 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200';
   };
+
+  const answeredCount = questions.filter(
+    (q) => !!answers[q.id] && answers[q.id].trim() !== '' && answers[q.id] !== '__SKIPPED__'
+  ).length;
+
+  const skippedCount = questions.filter(
+    (q) => !!skippedQuestions[q.id] || answers[q.id] === '__SKIPPED__'
+  ).length;
+
+  const notStartedCount = questions.length - answeredCount - skippedCount;
 
   return (
     <div id="question-navigator-card" className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col">
       <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-          Question Navigator
+        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+          Danh sách câu hỏi
         </h3>
-        <span className="text-xs font-mono text-slate-500 bg-slate-50 px-2.5 py-0.5 rounded-md border border-slate-200 font-semibold">
-          {Object.keys(answers).length} / {questions.length} Done
+        <span className="text-xs font-mono text-slate-700 bg-slate-50 px-2.5 py-0.5 rounded-md border border-slate-200 font-bold">
+          {answeredCount} / {questions.length} Đã làm
         </span>
       </div>
 
@@ -61,18 +72,33 @@ export default function QuestionNav({
       </div>
 
       {/* Legend */}
-      <div className="mt-6 space-y-2 border-t border-slate-100 pt-4 text-xs font-medium text-slate-600">
-        <div className="flex items-center">
-          <div className="w-3.5 h-3.5 rounded bg-green-500 mr-2 shrink-0"></div>
-          <span>Completed ({Object.keys(answers).length})</span>
+      <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-xs font-medium text-slate-600">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center">
+            <div className="w-3.5 h-3.5 rounded bg-emerald-600 mr-2 shrink-0"></div>
+            <span>Đã làm ({answeredCount})</span>
+          </div>
+          <span className="text-[10px] font-bold text-emerald-700 font-mono">
+            {questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0}%
+          </span>
         </div>
-        <div className="flex items-center">
-          <div className="w-3.5 h-3.5 rounded bg-amber-100 border border-amber-200 mr-2 shrink-0"></div>
-          <span>Skipped</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center">
+            <div className="w-3.5 h-3.5 rounded bg-amber-400 border border-amber-500 mr-2 shrink-0"></div>
+            <span>Đã bỏ qua ({skippedCount})</span>
+          </div>
+          <span className="text-[10px] font-bold text-amber-800 font-mono">
+            {skippedCount} câu
+          </span>
         </div>
-        <div className="flex items-center">
-          <div className="w-3.5 h-3.5 rounded bg-slate-100 mr-2 shrink-0"></div>
-          <span>Not Started</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center">
+            <div className="w-3.5 h-3.5 rounded bg-slate-100 border border-slate-200 mr-2 shrink-0"></div>
+            <span>Chưa làm ({notStartedCount})</span>
+          </div>
+          <span className="text-[10px] font-bold text-slate-500 font-mono">
+            {notStartedCount} câu
+          </span>
         </div>
       </div>
     </div>

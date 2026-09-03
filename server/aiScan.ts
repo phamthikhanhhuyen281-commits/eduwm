@@ -221,7 +221,7 @@ export async function scanExamWithAI(
     }
   };
 
-  const candidateModels = ['gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   const maxRetriesPerModel = 2;
   let lastError: any = null;
 

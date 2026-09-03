@@ -237,9 +237,18 @@ export default function App() {
     examService.getExams()
       .then((eList) => {
         setExams(eList || []);
-        if (eList && eList.length > 0 && !activeExam) {
-          setActiveExam(eList[0]);
-        }
+        setActiveExam((prev: any) => {
+          if (prev) return prev;
+          const savedCandidate = localStorage.getItem('candidate_session');
+          if (savedCandidate) {
+            try {
+              const parsed = JSON.parse(savedCandidate);
+              const found = eList?.find((e: any) => e.id === parsed.examId);
+              if (found) return found;
+            } catch (e) {}
+          }
+          return (eList && eList.length > 0) ? eList[0] : null;
+        });
       })
       .catch((err) => console.error('Error loading exams:', err));
   }, []);
@@ -547,6 +556,15 @@ export default function App() {
     }
   }, [activeExam?.id, SECTIONS_LIST.length, currentSection]);
 
+  // Whenever student enters test mode, always display the very first section of this exam
+  useEffect(() => {
+    if (inTestMode && SECTIONS_LIST.length > 0) {
+      setCurrentSection(SECTIONS_LIST[0].id);
+      setCurrentQuestionId('');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [inTestMode]);
+
   // Define active question bank for the side navigator palette
   const getActiveSectionQuestions = () => {
     switch (currentSection) {
@@ -722,6 +740,7 @@ export default function App() {
         setTestCompleted(Boolean(sessionData.candidate.submittedAt));
       } catch (e) {
         console.warn('Failed to switch candidate exam session:', e);
+        setTestCompleted(false);
       } finally {
         setLoading(false);
       }
@@ -732,6 +751,59 @@ export default function App() {
       setAnswers({});
       setSkippedQuestions({});
     }
+
+    // Always reset currentSection to the first section of the newly chosen exam
+    const isDefault = chosen.id === 'default-exam';
+    const q = chosen.questions || {};
+    const firstSec = isDefault
+      ? 'listening'
+      : (q.listeningPart1?.length || q.listeningPart2?.length)
+      ? 'listening'
+      : (q.speakingQuestions?.length || q.speakingReadAloud?.text?.trim())
+      ? 'speaking'
+      : q.grammar?.length
+      ? 'grammar'
+      : q.vocabulary?.length
+      ? 'vocabulary'
+      : (q.readingPassage?.questionsPartA?.length || q.readingPassage?.questionsPartB?.length || q.readingPassage?.text?.trim())
+      ? 'reading'
+      : q.writingQuestions?.length
+      ? 'writing'
+      : 'listening';
+    setCurrentSection(firstSec);
+    setCurrentQuestionId('');
+  };
+
+  const handleStartTestFromPortal = async () => {
+    if (!candidate || !activeExam) return;
+
+    if (candidate.examId !== activeExam.id) {
+      setLoading(true);
+      try {
+        const sessionData = await candidateService.registerCandidate(
+          candidate.fullName,
+          candidate.phone,
+          activeExam.id
+        );
+        setCandidate(sessionData.candidate);
+        localStorage.setItem('candidate_session', JSON.stringify(sessionData.candidate));
+        setAnswers(sessionData.restoredAnswers || {});
+        setTestCompleted(Boolean(sessionData.candidate.submittedAt));
+      } catch (e) {
+        console.error('Error starting active exam session:', e);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      setTestCompleted(Boolean(candidate.submittedAt));
+    }
+
+    // Always ensure the first test section is shown when candidate enters the exam
+    const firstSectionId = SECTIONS_LIST.length > 0 ? SECTIONS_LIST[0].id : 'listening';
+    setCurrentSection(firstSectionId);
+    setCurrentQuestionId('');
+    setInTestMode(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleStudentLogout = () => {
@@ -762,7 +834,7 @@ export default function App() {
         activeExam={activeExam}
         exams={exams}
         onSelectExam={handleSelectExam}
-        onStartTest={() => setInTestMode(true)}
+        onStartTest={handleStartTestFromPortal}
         onLogout={handleStudentLogout}
         materials={materials}
         testCompleted={testCompleted}
@@ -1036,6 +1108,70 @@ export default function App() {
                 {renderActiveSection()}
               </motion.div>
             </AnimatePresence>
+
+            {/* Section Progress & Navigation Bar */}
+            {SECTIONS_LIST.length > 1 && (() => {
+              const currentSectionIndex = SECTIONS_LIST.findIndex(s => s.id === currentSection);
+              const prevSec = currentSectionIndex > 0 ? SECTIONS_LIST[currentSectionIndex - 1] : null;
+              const nextSec = currentSectionIndex >= 0 && currentSectionIndex < SECTIONS_LIST.length - 1 ? SECTIONS_LIST[currentSectionIndex + 1] : null;
+
+              return (
+                <div className="mt-6 bg-white border border-slate-200 rounded-2xl p-4 md:p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="w-full sm:w-auto">
+                    {prevSec ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentSection(prevSec.id);
+                          setCurrentQuestionId('');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        ← {lang === 'vi' ? `Phần trước: ${t(`sec_${prevSec.id}` as any)}` : `Previous: ${t(`sec_${prevSec.id}` as any)}`}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400 font-semibold italic text-center sm:text-left block">
+                        {lang === 'vi' ? '● Phần thi đầu tiên' : '● First section'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-center text-xs font-bold text-indigo-950">
+                    <span className="text-slate-400 font-medium">
+                      {lang === 'vi' ? 'Tiến độ làm bài: ' : 'Test progress: '}
+                    </span>
+                    <span className="bg-indigo-50 text-indigo-900 px-3 py-1 rounded-lg border border-indigo-100 font-extrabold ml-1">
+                      {lang === 'vi' ? `Phần ${currentSectionIndex + 1} / ${SECTIONS_LIST.length}` : `Section ${currentSectionIndex + 1} of ${SECTIONS_LIST.length}`}
+                    </span>
+                  </div>
+
+                  <div className="w-full sm:w-auto">
+                    {nextSec ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentSection(nextSec.id);
+                          setCurrentQuestionId('');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="w-full sm:w-auto px-5 py-2.5 bg-indigo-900 hover:bg-indigo-850 text-white font-extrabold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        {lang === 'vi' ? `Tiếp tục: Sang phần ${t(`sec_${nextSec.id}` as any)} →` : `Continue to ${t(`sec_${nextSec.id}` as any)} →`}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmSubmit(true)}
+                        className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        {lang === 'vi' ? 'Đã đến phần cuối • Nộp bài thi →' : 'Final section reached • Submit test →'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Side Questions Palette Navigator */}

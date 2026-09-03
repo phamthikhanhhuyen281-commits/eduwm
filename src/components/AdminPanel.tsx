@@ -45,7 +45,7 @@ import { WRITING_QUESTIONS, LISTENING_PART_1, LISTENING_PART_2, SPEAKING_READ_AL
 
 // Firebase Services
 import { authService } from '../services/auth';
-import { candidateService } from '../services/candidateService';
+import { candidateService, Candidate, checkAnswer, isAnswerCorrect, isAnswerSkipped, getCandidateAnswer, autoGradeCandidate } from '../services/candidateService';
 import { examService } from '../services/examService';
 import { materialService } from '../services/materialService';
 import { settingsService } from '../services/settingsService';
@@ -94,44 +94,7 @@ function normalizeString(str: string): string {
 }
 
 function checkAnswerClient(userAnswer: string, correctAnswer: string): boolean {
-  if (!userAnswer) return false;
-  const normUser = normalizeString(userAnswer);
-  const normCorrect = normalizeString(correctAnswer);
-
-  if (!normUser) return false;
-
-  // Exact match
-  if (normUser === normCorrect) return true;
-
-  // Specific question overrides:
-  if (normCorrect === '1700') {
-    return normUser === '1700' || normUser.includes('1700');
-  }
-  if (normCorrect === '15') {
-    return normUser === '15' || normUser.includes('15');
-  }
-  if (normCorrect === 'may 5th') {
-    const valid = ['may 5th', 'may 5', '5 may', '5th may', 'may fifth', 'fifth of may'];
-    return valid.includes(normUser) || normUser.includes('may 5');
-  }
-  if (normCorrect === 'have never tried') {
-    const valid = ['have never tried', 'never tried', 'havent tried', 'has never tried', 'tried'];
-    return valid.includes(normUser);
-  }
-
-  // Prevent matching extremely short substrings (e.g. typing "a" matching "water")
-  if (normUser.length < 3) {
-    return normUser === normCorrect;
-  }
-
-  // If correct is a multi-word phrase, check if user includes it or vice versa
-  const correctWords = normCorrect.split(' ');
-  if (correctWords.length > 1) {
-    return normUser.includes(normCorrect) || normCorrect.includes(normUser);
-  }
-
-  // Single word: exact match is required!
-  return normUser === normCorrect;
+  return checkAnswer(userAnswer, correctAnswer);
 }
 
 function countTabSwitches(candidate: any): number {
@@ -191,6 +154,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   const [selectedCandidate, setSelectedCandidate] = useState<any | null>(null);
   const [viewingDetailId, setViewingDetailId] = useState<string | null>(null);
   const [activeAuditTab, setActiveAuditTab] = useState<'listening' | 'grammar' | 'vocabulary' | 'reading'>('listening');
+  const [auditStatusFilter, setAuditStatusFilter] = useState<'all' | 'correct' | 'incorrect' | 'skipped'>('all');
 
   // Materials state
   const [adminTab, setAdminTab] = useState<'exams' | 'candidates' | 'materials' | 'settings' | 'logs'>('exams');
@@ -272,6 +236,27 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
   const [isBulkDeletingMaterials, setIsBulkDeletingMaterials] = useState(false);
+
+  // Custom Confirmation Modal state
+  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
+  const [confirmModalConfig, setConfirmModalConfig] = useState<{
+    type?: 'reset' | 'delete';
+    id?: string;
+    name?: string;
+    title?: string;
+    description?: React.ReactNode;
+    confirmText?: string;
+    confirmStyle?: 'danger' | 'warning' | 'primary';
+    onConfirm?: () => Promise<void> | void;
+  } | null>(null);
+
+  // Custom Alert Modal state
+  const [alertConfig, setAlertConfig] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error';
+  } | null>(null);
 
   // Custom alert action
   const showAlert = (title: string, message: string, type: 'success' | 'error') => {
@@ -1232,9 +1217,32 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     setViewingDetailId(null);
   };
 
+  const deduplicateCandidateList = (list: Candidate[]): Candidate[] => {
+    const map = new Map<string, Candidate>();
+    const sorted = [...list].sort((a, b) => {
+      if (a.submittedAt && !b.submittedAt) return -1;
+      if (!a.submittedAt && b.submittedAt) return 1;
+      if (a.submittedAt && b.submittedAt) {
+        return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+      }
+      return (b.durationSeconds || 0) - (a.durationSeconds || 0);
+    });
+
+    sorted.forEach((c) => {
+      const cleanPhone = (c.phone || '').replace(/[\s\.\-\(\)]/g, '').trim() || c.phone || c.id;
+      const examKey = c.examId || 'default-exam';
+      const key = `${cleanPhone}__${examKey}`;
+      if (!map.has(key)) {
+        map.set(key, c);
+      }
+    });
+    return Array.from(map.values());
+  };
+
   const fetchDashboardData = async () => {
     try {
-      const cands = await candidateService.getCandidates();
+      const rawCands = await candidateService.getCandidates();
+      const cands = deduplicateCandidateList(rawCands);
       setCandidates(cands);
       calculateDashboardStats(cands);
     } catch (e) {
@@ -1244,7 +1252,8 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
   const fetchCandidates = async () => {
     try {
-      const cands = await candidateService.getCandidates();
+      const rawCands = await candidateService.getCandidates();
+      const cands = deduplicateCandidateList(rawCands);
       setCandidates(cands);
       calculateDashboardStats(cands);
     } catch (e) {
@@ -4146,12 +4155,54 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
               const totalAutoGradedCount = totalListeningCount + totalGrammarCount + totalVocabCount + totalReadingCount;
               const hasAutoGradedSections = hasListening || hasGrammar || hasVocabulary || totalReadingCount > 0;
 
+              // Compute stats for each section using candidateService helpers
+              const getSectionStats = (sectionKey: string, qList: any[]) => {
+                let correct = 0;
+                let skipped = 0;
+                let incorrect = 0;
+                qList.forEach((q: any) => {
+                  const ans = getCandidateAnswer(selectedCandidate, sectionKey, q.id);
+                  const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                  if (isSkipped) {
+                    skipped++;
+                  } else if (isAnswerCorrect(ans, q)) {
+                    correct++;
+                  } else {
+                    incorrect++;
+                  }
+                });
+                return { correct, skipped, incorrect, total: qList.length };
+              };
+
+              const l1Stats = getSectionStats('listeningPart1', listeningP1List);
+              const l2Stats = getSectionStats('listeningPart2', listeningP2List);
+              const listeningStats = {
+                correct: l1Stats.correct + l2Stats.correct,
+                skipped: l1Stats.skipped + l2Stats.skipped,
+                incorrect: l1Stats.incorrect + l2Stats.incorrect,
+                total: totalListeningCount
+              };
+              const grammarStats = getSectionStats('grammar', grammarQuestionsList);
+              const vocabStats = getSectionStats('vocabulary', vocabQuestionsList);
+              const rAStats = getSectionStats('readingPartA', readingPartAList);
+              const rBStats = getSectionStats('readingPartB', readingPartBList);
+              const readingStats = {
+                correct: rAStats.correct + rBStats.correct,
+                skipped: rAStats.skipped + rBStats.skipped,
+                incorrect: rAStats.incorrect + rBStats.incorrect,
+                total: totalReadingCount
+              };
+
+              const overallCorrectCount = listeningStats.correct + grammarStats.correct + vocabStats.correct + readingStats.correct;
+              const overallSkippedCount = listeningStats.skipped + grammarStats.skipped + vocabStats.skipped + readingStats.skipped;
+              const overallIncorrectCount = listeningStats.incorrect + grammarStats.incorrect + vocabStats.incorrect + readingStats.incorrect;
+
               // Compute available audit tabs strictly according to this exam's actual questions
-              const availableTabs: { id: string; label: string; count: number; score: number }[] = [];
-              if (hasListening) availableTabs.push({ id: 'listening', label: 'Listening', count: totalListeningCount, score: selectedCandidate.scores?.listening || 0 });
-              if (hasGrammar) availableTabs.push({ id: 'grammar', label: 'Grammar', count: totalGrammarCount, score: selectedCandidate.scores?.grammar || 0 });
-              if (hasVocabulary) availableTabs.push({ id: 'vocabulary', label: 'Vocabulary', count: totalVocabCount, score: selectedCandidate.scores?.vocabulary || 0 });
-              if (hasReading) availableTabs.push({ id: 'reading', label: 'Reading', count: totalReadingCount, score: selectedCandidate.scores?.reading || 0 });
+              const availableTabs: { id: string; label: string; count: number; score: number; stats: typeof grammarStats }[] = [];
+              if (hasListening) availableTabs.push({ id: 'listening', label: 'Listening', count: totalListeningCount, score: listeningStats.correct, stats: listeningStats });
+              if (hasGrammar) availableTabs.push({ id: 'grammar', label: 'Grammar', count: totalGrammarCount, score: grammarStats.correct, stats: grammarStats });
+              if (hasVocabulary) availableTabs.push({ id: 'vocabulary', label: 'Vocabulary', count: totalVocabCount, score: vocabStats.correct, stats: vocabStats });
+              if (hasReading) availableTabs.push({ id: 'reading', label: 'Reading', count: totalReadingCount, score: readingStats.correct, stats: readingStats });
 
               const currentAuditTab = availableTabs.some(t => t.id === activeAuditTab)
                 ? activeAuditTab
@@ -4504,11 +4555,74 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                   <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
                     <div className="border-b border-slate-100 pb-4">
                       <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-indigo-950" /> CHI TIẾT BÀI LÀM TỪNG CÂU (DETAILED ANSWERS AUDIT)
+                        <FileText className="w-5 h-5 text-indigo-950" /> CHI TIẾT BÀI LÀM TỪNG CÂU & THỐNG KÊ KẾT QUẢ
                       </h4>
                       <p className="text-xs text-slate-400 mt-1">
-                        Xem chi tiết từng câu hỏi thực tế của kỳ thi này, các đáp án học sinh đã chọn và đáp án đúng. Đúng hiện màu xanh lá, sai hiện màu đỏ.
+                        Xem chi tiết từng câu hỏi thực tế của kỳ thi này, các đáp án học sinh đã chọn, câu đúng, câu sai và câu bỏ qua.
                       </p>
+                    </div>
+
+                    {/* Quick Statistics Banner */}
+                    <div className="bg-gradient-to-r from-slate-50 to-indigo-50/40 border border-slate-200/90 rounded-xl p-4">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div>
+                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Tổng kết toàn bộ bài thi trắc nghiệm</span>
+                          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                            <span className="text-xs font-black text-slate-700 px-2.5 py-1 bg-white border border-slate-200 rounded-lg shadow-xs">
+                              Tổng số: <strong>{totalAutoGradedCount}</strong> câu
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-xs font-black text-emerald-800 bg-emerald-100/80 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                              <Check className="w-3.5 h-3.5" /> Đúng: {overallCorrectCount} ({totalAutoGradedCount > 0 ? Math.round((overallCorrectCount / totalAutoGradedCount) * 100) : 0}%)
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-xs font-black text-rose-800 bg-rose-100/80 border border-rose-200 px-2.5 py-1 rounded-lg">
+                              <X className="w-3.5 h-3.5" /> Sai / Chưa làm: {overallIncorrectCount}
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-xs font-black text-amber-800 bg-amber-100/80 border border-amber-200 px-2.5 py-1 rounded-lg">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> Bỏ qua: {overallSkippedCount}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Filter buttons */}
+                        <div className="flex items-center gap-1 bg-white p-1 border border-slate-200 rounded-xl shadow-xs shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setAuditStatusFilter('all')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              auditStatusFilter === 'all' ? 'bg-indigo-950 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Tất cả ({totalAutoGradedCount})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAuditStatusFilter('correct')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              auditStatusFilter === 'correct' ? 'bg-emerald-600 text-white shadow-xs' : 'text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                          >
+                            Đúng ({overallCorrectCount})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAuditStatusFilter('incorrect')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              auditStatusFilter === 'incorrect' ? 'bg-rose-600 text-white shadow-xs' : 'text-rose-700 hover:bg-rose-50'
+                            }`}
+                          >
+                            Sai ({overallIncorrectCount})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAuditStatusFilter('skipped')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              auditStatusFilter === 'skipped' ? 'bg-amber-600 text-white shadow-xs' : 'text-amber-800 hover:bg-amber-50'
+                            }`}
+                          >
+                            Bỏ qua ({overallSkippedCount})
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Tab switcher: Only render tabs for sections that actually exist */}
@@ -4522,7 +4636,10 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                             currentAuditTab === tab.id ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                           }`}
                         >
-                          {tab.label} ({tab.score}/{tab.count})
+                          <div>{tab.label} ({tab.score}/{tab.count})</div>
+                          <div className="text-[10px] font-normal text-slate-500 mt-0.5">
+                            {tab.stats.correct} đúng · {tab.stats.incorrect} sai{tab.stats.skipped > 0 ? ` · ${tab.stats.skipped} bỏ qua` : ''}
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -4536,403 +4653,444 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                               <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
                                 PART 1: MULTIPLE CHOICE QUESTIONS (CÂU 1 - {listeningP1List.length})
                               </div>
-                              {listeningP1List.map((q, idx) => {
-                                const ans = selectedCandidate.answers?.listeningPart1?.[q.id] || '';
-                              const isSkipped = ans === '__SKIPPED__';
-                              const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
-                              return (
-                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                                  'bg-rose-50/40 border-rose-150'
-                                }`}>
-                                  <div className="flex justify-between items-start">
-                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Listening Part 1)</span>
-                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                      isSkipped ? 'bg-amber-100 text-amber-800' :
-                                      'bg-rose-100 text-rose-800'
-                                    }`}>
-                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                    </span>
-                                  </div>
-                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                                  
-                                  {isSkipped ? (
-                                    <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                      <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                      <span className="italic font-bold block mt-1">
-                                        Lý do: {selectedCandidate.answers?.listeningPart1?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                              {listeningP1List.map((q: any, idx: number) => {
+                                const ans = getCandidateAnswer(selectedCandidate, 'listeningPart1', q.id);
+                                const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                                const isCorrect = isAnswerCorrect(ans, q);
+                                const isIncorrect = !isCorrect && !isSkipped;
+                                if (auditStatusFilter === 'correct' && !isCorrect) return null;
+                                if (auditStatusFilter === 'incorrect' && !isIncorrect) return null;
+                                if (auditStatusFilter === 'skipped' && !isSkipped) return null;
+
+                                return (
+                                  <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                    isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                    isSkipped ? 'bg-amber-50/30 border-amber-200' :
+                                    'bg-rose-50/40 border-rose-150'
+                                  }`}>
+                                    <div className="flex justify-between items-start">
+                                      <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Listening Part 1)</span>
+                                      <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                        isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                        isSkipped ? 'bg-amber-100 text-amber-800' :
+                                        'bg-rose-100 text-rose-800'
+                                      }`}>
+                                        {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                        {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
                                       </span>
                                     </div>
-                                  ) : (
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                                      {q.options?.map((opt, oIdx) => {
-                                        const letter = String.fromCharCode(65 + oIdx);
-                                        const isSelected = ans.trim().toUpperCase() === letter;
-                                        const isCorrectLetter = q.answer.toUpperCase() === letter;
-                                        return (
-                                          <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                            isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                            isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                            !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                            'bg-white border-slate-200 text-slate-600'
-                                          }`}>
-                                            <span className="font-bold mr-1.5">{letter}.</span> {opt}
-                                            {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                            {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {listeningP2List.length > 0 && (
-                          <div className="space-y-4">
-                            <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
-                              PART 2: FILL IN THE BLANKS (CÂU {listeningP1List.length + 1} - {totalListeningCount})
-                            </div>
-                            {listeningP2List.map((q, idx) => {
-                              const ans = selectedCandidate.answers?.listeningPart2?.[q.id] || '';
-                              const isSkipped = ans === '__SKIPPED__';
-                              const isCorrect = !isSkipped && checkAnswerClient(ans, q.answer);
-                              return (
-                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                                  'bg-rose-50/40 border-rose-150'
-                                }`}>
-                                  <div className="flex justify-between items-start">
-                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + listeningP1List.length + 1} (Listening Part 2)</span>
-                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                      isSkipped ? 'bg-amber-100 text-amber-800' :
-                                      'bg-rose-100 text-rose-800'
-                                    }`}>
-                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                    </span>
-                                  </div>
-                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                                  
-                                  {isSkipped ? (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                      <div className="p-3 rounded-lg border border-amber-250 bg-amber-50 text-xs text-amber-950">
-                                        <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                        <span className="italic font-bold block mt-1">
-                                          Lý do: {selectedCandidate.answers?.listeningPart2?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                    <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                    
+                                    {isSkipped ? (
+                                      <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                        <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY</span>
+                                        <span className="italic font-medium block mt-1">
+                                          Ghi chú: {selectedCandidate.answers?.listeningPart1?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
                                         </span>
+                                        <div className="mt-2 text-slate-700">
+                                          Đáp án đúng: <strong className="text-emerald-750 font-bold">{q.answer}</strong>
+                                        </div>
                                       </div>
-                                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 flex flex-col justify-center">
-                                        <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
-                                        <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-850">"{q.answer}"</span>
+                                    ) : (
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                                        {q.options?.map((opt: string, oIdx: number) => {
+                                          const letter = String.fromCharCode(65 + oIdx);
+                                          const isSelected = ans.trim().toUpperCase() === letter || ans.trim().toUpperCase() === opt.trim().toUpperCase();
+                                          const isCorrectLetter = (q.answer || '').trim().toUpperCase() === letter || (q.answer || '').trim().toUpperCase() === opt.trim().toUpperCase();
+                                          return (
+                                            <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                              isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                              isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                              !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                              'bg-white border-slate-200 text-slate-600'
+                                            }`}>
+                                              <span className="font-bold mr-1.5">{letter}.</span> {opt}
+                                              {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                              {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                            </div>
+                                          );
+                                        })}
                                       </div>
-                                    </div>
-                                  ) : (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                      <div className={`p-3 rounded-lg border text-xs ${isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
-                                        <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN HỌC SINH NHẬP:</span>
-                                        <span className="font-mono text-sm font-bold block mt-0.5">{ans ? `"${ans}"` : <span className="italic text-slate-400 font-normal">Bỏ trống</span>}</span>
-                                      </div>
-                                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800">
-                                        <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
-                                        <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-800">"{q.answer}"</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
 
-                    {currentAuditTab === 'grammar' && hasGrammar && (
-                      <div className="space-y-4">
-                        {grammarQuestionsList.map((q, idx) => {
-                          const ans = selectedCandidate.answers?.grammar?.[q.id] || '';
-                          const isSkipped = ans === '__SKIPPED__';
-                          const isCorrect = !isSkipped && (q.type === 'mcq'
-                            ? ans.trim().toUpperCase() === q.answer.toUpperCase()
-                            : checkAnswerClient(ans, q.answer));
-                          
-                          return (
-                            <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                              isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                              isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                              'bg-rose-50/40 border-rose-150'
-                            }`}>
-                              <div className="flex justify-between items-start">
-                                <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Grammar)</span>
-                                <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                  isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                  isSkipped ? 'bg-amber-100 text-amber-800' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                  {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                </span>
+                          {listeningP2List.length > 0 && (
+                            <div className="space-y-4">
+                              <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
+                                PART 2: FILL IN THE BLANKS (CÂU {listeningP1List.length + 1} - {totalListeningCount})
                               </div>
-                              <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                              
-                              {isSkipped ? (
-                                <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                  <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                  <span className="italic font-bold block mt-1">
-                                    Lý do: {selectedCandidate.answers?.grammar?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
-                                  </span>
-                                </div>
-                              ) : q.type === 'mcq' ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-                                  {q.options?.map((opt, oIdx) => {
-                                    const letter = String.fromCharCode(65 + oIdx);
-                                    const isSelected = ans.trim().toUpperCase() === letter;
-                                    const isCorrectLetter = q.answer.toUpperCase() === letter;
-                                    return (
-                                      <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                        isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                        isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                        !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                        'bg-white border-slate-200 text-slate-600'
+                              {listeningP2List.map((q: any, idx: number) => {
+                                const ans = getCandidateAnswer(selectedCandidate, 'listeningPart2', q.id);
+                                const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                                const isCorrect = isAnswerCorrect(ans, q);
+                                const isIncorrect = !isCorrect && !isSkipped;
+                                if (auditStatusFilter === 'correct' && !isCorrect) return null;
+                                if (auditStatusFilter === 'incorrect' && !isIncorrect) return null;
+                                if (auditStatusFilter === 'skipped' && !isSkipped) return null;
+
+                                return (
+                                  <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                    isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                    isSkipped ? 'bg-amber-50/30 border-amber-200' :
+                                    'bg-rose-50/40 border-rose-150'
+                                  }`}>
+                                    <div className="flex justify-between items-start">
+                                      <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + listeningP1List.length + 1} (Listening Part 2)</span>
+                                      <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                        isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                        isSkipped ? 'bg-amber-100 text-amber-800' :
+                                        'bg-rose-100 text-rose-800'
                                       }`}>
-                                        <span className="font-bold mr-1">{letter}.</span> {opt}
-                                        {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                        {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                  <div className={`p-3 rounded-lg border text-xs ${isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
-                                    <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN HỌC SINH NHẬP:</span>
-                                    <span className="font-mono text-sm font-bold block mt-0.5">{ans ? `"${ans}"` : <span className="italic text-slate-400 font-normal">Bỏ trống</span>}</span>
-                                  </div>
-                                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800">
-                                    <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
-                                    <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-800">"{q.answer}"</span>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {currentAuditTab === 'vocabulary' && hasVocabulary && (
-                      <div className="space-y-4">
-                        {vocabQuestionsList.map((q, idx) => {
-                          const ans = selectedCandidate.answers?.vocabulary?.[q.id] || '';
-                          const isSkipped = ans === '__SKIPPED__';
-                          const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
-                          
-                          return (
-                            <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                              isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                              isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                              'bg-rose-50/40 border-rose-150'
-                            }`}>
-                              <div className="flex justify-between items-start">
-                                <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Vocabulary)</span>
-                                <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                  isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                  isSkipped ? 'bg-amber-100 text-amber-800' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                  {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                </span>
-                              </div>
-                              <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                              
-                              {isSkipped ? (
-                                <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                  <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                  <span className="italic font-bold block mt-1">
-                                    Lý do: {selectedCandidate.answers?.vocabulary?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-                                  {q.options?.map((opt, oIdx) => {
-                                    const letter = String.fromCharCode(65 + oIdx);
-                                    const isSelected = ans.trim().toUpperCase() === letter;
-                                    const isCorrectLetter = q.answer.toUpperCase() === letter;
-                                    return (
-                                      <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                        isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                        isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                        !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                        'bg-white border-slate-200 text-slate-600'
-                                      }`}>
-                                        <span className="font-bold mr-1">{letter}.</span> {opt}
-                                        {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                        {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {currentAuditTab === 'reading' && hasReading && (
-                      <div className="space-y-4">
-                        {/* Reading passage display */}
-                        {readingPassageData?.text && (
-                          <div className="bg-amber-50/50 border border-amber-200/80 rounded-xl p-5 mb-4 space-y-3 dark:bg-slate-850 dark:border-amber-900/40">
-                            <h6 className="font-extrabold text-sm text-amber-900 dark:text-amber-400 border-b border-amber-200/60 dark:border-amber-900/20 pb-1.5 uppercase">
-                              BÀI ĐỌC: {readingPassageData?.title || 'English Reading Passage'}
-                            </h6>
-                            <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
-                              {readingPassageData?.text}
-                            </div>
-                          </div>
-                        )}
-
-                        {readingPartAList.length > 0 && (
-                          <div className="space-y-4">
-                            <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
-                              PART A: MULTIPLE CHOICE QUESTIONS (CÂU 1 - {readingPartAList.length})
-                            </div>
-                            {readingPartAList.map((q, idx) => {
-                              const ans = selectedCandidate.answers?.readingPartA?.[q.id] || '';
-                              const isSkipped = ans === '__SKIPPED__';
-                              const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
-                              return (
-                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                                  'bg-rose-50/40 border-rose-150'
-                                }`}>
-                                  <div className="flex justify-between items-start">
-                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Reading Part A)</span>
-                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                      isSkipped ? 'bg-amber-100 text-amber-800' :
-                                      'bg-rose-100 text-rose-800'
-                                    }`}>
-                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                    </span>
-                                  </div>
-                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                                  
-                                  {isSkipped ? (
-                                    <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                      <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                      <span className="italic font-bold block mt-1">
-                                        Lý do: {selectedCandidate.answers?.readingPartA?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                        {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                        {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
                                       </span>
                                     </div>
-                                  ) : (
-                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-                                      {q.options?.map((opt, oIdx) => {
-                                        const letter = String.fromCharCode(65 + oIdx);
-                                        const isSelected = ans.trim().toUpperCase() === letter;
-                                        const isCorrectLetter = q.answer.toUpperCase() === letter;
-                                        return (
-                                          <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                            isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                            isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                            !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                            'bg-white border-slate-200 text-slate-600'
-                                          }`}>
-                                            <span className="font-bold mr-1">{letter}.</span> {opt}
-                                            {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                            {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {readingPartBList.length > 0 && (
-                          <div className="space-y-4">
-                            <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
-                              PART B: TRUE / FALSE / NOT GIVEN (CÂU {readingPartAList.length + 1} - {totalReadingCount})
-                            </div>
-                            {readingPartBList.map((q, idx) => {
-                              const ans = selectedCandidate.answers?.readingPartB?.[q.id] || '';
-                              const isSkipped = ans === '__SKIPPED__';
-                              const isCorrect = !isSkipped && ans.trim().toUpperCase() === q.answer.toUpperCase();
-                              return (
-                                <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
-                                  isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
-                                  isSkipped ? 'bg-amber-50/20 border-amber-200' :
-                                  'bg-rose-50/40 border-rose-150'
-                                }`}>
-                                  <div className="flex justify-between items-start">
-                                    <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + readingPartAList.length + 1} (Reading Part B)</span>
-                                    <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
-                                      isCorrect ? 'bg-emerald-100 text-emerald-850' :
-                                      isSkipped ? 'bg-amber-100 text-amber-800' :
-                                      'bg-rose-100 text-rose-800'
-                                    }`}>
-                                      {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
-                                      {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
-                                    </span>
+                                    <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                    
+                                    {isSkipped ? (
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                        <div className="p-3 rounded-lg border border-amber-250 bg-amber-50 text-xs text-amber-950">
+                                          <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY</span>
+                                          <span className="italic font-medium block mt-1">
+                                            Ghi chú: {selectedCandidate.answers?.listeningPart2?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                          </span>
+                                        </div>
+                                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 flex flex-col justify-center">
+                                          <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
+                                          <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-850">"{q.answer}"</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                        <div className={`p-3 rounded-lg border text-xs ${isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
+                                          <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN HỌC SINH NHẬP:</span>
+                                          <span className="font-mono text-sm font-bold block mt-0.5">{ans ? `"${ans}"` : <span className="italic text-slate-400 font-normal">Bỏ trống</span>}</span>
+                                        </div>
+                                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800">
+                                          <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
+                                          <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-800">"{q.answer}"</span>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
-                                  <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
-                                  
-                                  {isSkipped ? (
-                                    <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
-                                      <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY:</span>
-                                      <span className="italic font-bold block mt-1">
-                                        Lý do: {selectedCandidate.answers?.readingPartB?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {currentAuditTab === 'grammar' && hasGrammar && (
+                        <div className="space-y-4">
+                          {grammarQuestionsList.map((q: any, idx: number) => {
+                            const ans = getCandidateAnswer(selectedCandidate, 'grammar', q.id);
+                            const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                            const isCorrect = isAnswerCorrect(ans, q);
+                            const isIncorrect = !isCorrect && !isSkipped;
+                            if (auditStatusFilter === 'correct' && !isCorrect) return null;
+                            if (auditStatusFilter === 'incorrect' && !isIncorrect) return null;
+                            if (auditStatusFilter === 'skipped' && !isSkipped) return null;
+                            
+                            return (
+                              <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                isSkipped ? 'bg-amber-50/30 border-amber-200' :
+                                'bg-rose-50/40 border-rose-150'
+                              }`}>
+                                <div className="flex justify-between items-start">
+                                  <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Grammar)</span>
+                                  <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                    isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                    isSkipped ? 'bg-amber-100 text-amber-800' :
+                                    'bg-rose-100 text-rose-800'
+                                  }`}>
+                                    {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                    {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                  </span>
+                                </div>
+                                <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                
+                                {isSkipped ? (
+                                  <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                    <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY</span>
+                                    <span className="italic font-medium block mt-1">
+                                      Ghi chú: {selectedCandidate.answers?.grammar?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                    </span>
+                                    <div className="mt-2 text-slate-700">
+                                      Đáp án đúng: <strong className="text-emerald-750 font-bold">{q.answer}</strong>
+                                    </div>
+                                  </div>
+                                ) : (Array.isArray(q.options) && q.options.length > 0) ? (
+                                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                                    {q.options?.map((opt: string, oIdx: number) => {
+                                      const letter = String.fromCharCode(65 + oIdx);
+                                      const isSelected = ans.trim().toUpperCase() === letter || ans.trim().toUpperCase() === opt.trim().toUpperCase();
+                                      const isCorrectLetter = (q.answer || '').trim().toUpperCase() === letter || (q.answer || '').trim().toUpperCase() === opt.trim().toUpperCase();
+                                      return (
+                                        <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                          isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                          isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                          !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                          'bg-white border-slate-200 text-slate-600'
+                                        }`}>
+                                          <span className="font-bold mr-1">{letter}.</span> {opt}
+                                          {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                          {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                    <div className={`p-3 rounded-lg border text-xs ${isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
+                                      <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN HỌC SINH NHẬP:</span>
+                                      <span className="font-mono text-sm font-bold block mt-0.5">{ans ? `"${ans}"` : <span className="italic text-slate-400 font-normal">Bỏ trống</span>}</span>
+                                    </div>
+                                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800">
+                                      <span className="font-extrabold block text-[10px] text-slate-400 uppercase">ĐÁP ÁN ĐÚNG HOẶC CHẤP NHẬN:</span>
+                                      <span className="font-mono text-sm font-bold block mt-0.5 text-emerald-800">"{q.answer}"</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {currentAuditTab === 'vocabulary' && hasVocabulary && (
+                        <div className="space-y-4">
+                          {vocabQuestionsList.map((q: any, idx: number) => {
+                            const ans = getCandidateAnswer(selectedCandidate, 'vocabulary', q.id);
+                            const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                            const isCorrect = isAnswerCorrect(ans, q);
+                            const isIncorrect = !isCorrect && !isSkipped;
+                            if (auditStatusFilter === 'correct' && !isCorrect) return null;
+                            if (auditStatusFilter === 'incorrect' && !isIncorrect) return null;
+                            if (auditStatusFilter === 'skipped' && !isSkipped) return null;
+                            
+                            return (
+                              <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                isSkipped ? 'bg-amber-50/30 border-amber-200' :
+                                'bg-rose-50/40 border-rose-150'
+                              }`}>
+                                <div className="flex justify-between items-start">
+                                  <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Vocabulary)</span>
+                                  <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                    isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                    isSkipped ? 'bg-amber-100 text-amber-800' :
+                                    'bg-rose-100 text-rose-800'
+                                  }`}>
+                                    {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                    {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                  </span>
+                                </div>
+                                <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                
+                                {isSkipped ? (
+                                  <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                    <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY</span>
+                                    <span className="italic font-medium block mt-1">
+                                      Ghi chú: {selectedCandidate.answers?.vocabulary?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                    </span>
+                                    <div className="mt-2 text-slate-700">
+                                      Đáp án đúng: <strong className="text-emerald-750 font-bold">{q.answer}</strong>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                                    {q.options?.map((opt: string, oIdx: number) => {
+                                      const letter = String.fromCharCode(65 + oIdx);
+                                      const isSelected = ans.trim().toUpperCase() === letter || ans.trim().toUpperCase() === opt.trim().toUpperCase();
+                                      const isCorrectLetter = (q.answer || '').trim().toUpperCase() === letter || (q.answer || '').trim().toUpperCase() === opt.trim().toUpperCase();
+                                      return (
+                                        <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                          isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                          isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                          !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                          'bg-white border-slate-200 text-slate-600'
+                                        }`}>
+                                          <span className="font-bold mr-1">{letter}.</span> {opt}
+                                          {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                          {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {currentAuditTab === 'reading' && hasReading && (
+                        <div className="space-y-4">
+                          {/* Reading passage display */}
+                          {readingPassageData?.text && (
+                            <div className="bg-amber-50/50 border border-amber-200/80 rounded-xl p-5 mb-4 space-y-3 dark:bg-slate-850 dark:border-amber-900/40">
+                              <h6 className="font-extrabold text-sm text-amber-900 dark:text-amber-400 border-b border-amber-200/60 dark:border-amber-900/20 pb-1.5 uppercase">
+                                BÀI ĐỌC: {readingPassageData?.title || 'English Reading Passage'}
+                              </h6>
+                              <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                                {readingPassageData?.text}
+                              </div>
+                            </div>
+                          )}
+
+                          {readingPartAList.length > 0 && (
+                            <div className="space-y-4">
+                              <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg">
+                                PART A: MULTIPLE CHOICE QUESTIONS (CÂU 1 - {readingPartAList.length})
+                              </div>
+                              {readingPartAList.map((q: any, idx: number) => {
+                                const ans = getCandidateAnswer(selectedCandidate, 'readingPartA', q.id);
+                                const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                                const isCorrect = isAnswerCorrect(ans, q);
+                                const isIncorrect = !isCorrect && !isSkipped;
+                                if (auditStatusFilter === 'correct' && !isCorrect) return null;
+                                if (auditStatusFilter === 'incorrect' && !isIncorrect) return null;
+                                if (auditStatusFilter === 'skipped' && !isSkipped) return null;
+
+                                return (
+                                  <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                    isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                    isSkipped ? 'bg-amber-50/30 border-amber-200' :
+                                    'bg-rose-50/40 border-rose-150'
+                                  }`}>
+                                    <div className="flex justify-between items-start">
+                                      <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + 1} (Reading Part A)</span>
+                                      <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                        isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                        isSkipped ? 'bg-amber-100 text-amber-800' :
+                                        'bg-rose-100 text-rose-800'
+                                      }`}>
+                                        {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                        {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
                                       </span>
                                     </div>
-                                  ) : (
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                                      {q.options?.map((opt, oIdx) => {
-                                        const letter = String.fromCharCode(65 + oIdx);
-                                        const isSelected = ans.trim().toUpperCase() === opt.toUpperCase();
-                                        const isCorrectLetter = q.answer.toUpperCase() === opt.toUpperCase();
-                                        return (
-                                          <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
-                                            isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
-                                            isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
-                                            !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                                            'bg-white border-slate-200 text-slate-600'
-                                          }`}>
-                                            <span className="font-bold mr-1">{letter}.</span> {opt}
-                                            {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
-                                            {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
-                                          </div>
-                                        );
-                                      })}
+                                    <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                    
+                                    {isSkipped ? (
+                                      <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                        <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY</span>
+                                        <span className="italic font-medium block mt-1">
+                                          Ghi chú: {selectedCandidate.answers?.readingPartA?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                        </span>
+                                        <div className="mt-2 text-slate-700">
+                                          Đáp án đúng: <strong className="text-emerald-750 font-bold">{q.answer}</strong>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                                        {q.options?.map((opt: string, oIdx: number) => {
+                                          const letter = String.fromCharCode(65 + oIdx);
+                                          const isSelected = ans.trim().toUpperCase() === letter || ans.trim().toUpperCase() === opt.trim().toUpperCase();
+                                          const isCorrectLetter = (q.answer || '').trim().toUpperCase() === letter || (q.answer || '').trim().toUpperCase() === opt.trim().toUpperCase();
+                                          return (
+                                            <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                              isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                              isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                              !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                              'bg-white border-slate-200 text-slate-600'
+                                            }`}>
+                                              <span className="font-bold mr-1">{letter}.</span> {opt}
+                                              {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                              {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {readingPartBList.length > 0 && (
+                            <div className="space-y-4">
+                              <div className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg mt-6">
+                                PART B: TRUE / FALSE / NOT GIVEN (CÂU {readingPartAList.length + 1} - {totalReadingCount})
+                              </div>
+                              {readingPartBList.map((q: any, idx: number) => {
+                                const ans = getCandidateAnswer(selectedCandidate, 'readingPartB', q.id);
+                                const isSkipped = isAnswerSkipped(ans, selectedCandidate, q.id);
+                                const isCorrect = isAnswerCorrect(ans, q);
+                                const isIncorrect = !isCorrect && !isSkipped;
+                                if (auditStatusFilter === 'correct' && !isCorrect) return null;
+                                if (auditStatusFilter === 'incorrect' && !isIncorrect) return null;
+                                if (auditStatusFilter === 'skipped' && !isSkipped) return null;
+
+                                return (
+                                  <div key={q.id || idx} className={`p-4 border rounded-xl space-y-3 transition-all ${
+                                    isCorrect ? 'bg-emerald-50/40 border-emerald-200' :
+                                    isSkipped ? 'bg-amber-50/30 border-amber-200' :
+                                    'bg-rose-50/40 border-rose-150'
+                                  }`}>
+                                    <div className="flex justify-between items-start">
+                                      <span className="font-extrabold text-[10px] text-slate-500 uppercase">Câu {idx + readingPartAList.length + 1} (Reading Part B)</span>
+                                      <span className={`flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                                        isCorrect ? 'bg-emerald-100 text-emerald-850' :
+                                        isSkipped ? 'bg-amber-100 text-amber-800' :
+                                        'bg-rose-100 text-rose-800'
+                                      }`}>
+                                        {isCorrect ? <Check className="w-3.5 h-3.5" /> : isSkipped ? <ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> : <X className="w-3.5 h-3.5" />}
+                                        {isCorrect ? 'Chính xác (+1đ)' : isSkipped ? 'Đã bỏ qua (0đ)' : 'Chưa chính xác (0đ)'}
+                                      </span>
                                     </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                                    <p className="font-bold text-slate-800 text-sm font-sans">{q.text}</p>
+                                    
+                                    {isSkipped ? (
+                                      <div className="p-3 bg-amber-50 border border-amber-150 rounded-lg text-xs text-amber-900">
+                                        <span className="font-extrabold block text-[10px] text-amber-600 uppercase">HỌC SINH ĐÃ CHỌN BỎ QUA CÂU NÀY</span>
+                                        <span className="italic font-medium block mt-1">
+                                          Ghi chú: {selectedCandidate.answers?.readingPartB?.[`__NOTE__${q.id}`] || <span className="font-normal text-slate-400">Không có lý do ghi chú.</span>}
+                                        </span>
+                                        <div className="mt-2 text-slate-700">
+                                          Đáp án đúng: <strong className="text-emerald-750 font-bold">{q.answer}</strong>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                                        {q.options?.map((opt: string, oIdx: number) => {
+                                          const letter = String.fromCharCode(65 + oIdx);
+                                          const isSelected = ans.trim().toUpperCase() === opt.trim().toUpperCase() || ans.trim().toUpperCase() === letter;
+                                          const isCorrectLetter = (q.answer || '').trim().toUpperCase() === opt.trim().toUpperCase() || (q.answer || '').trim().toUpperCase() === letter;
+                                          return (
+                                            <div key={letter} className={`p-2.5 rounded-lg border font-medium ${
+                                              isSelected && isCorrectLetter ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold' :
+                                              isSelected && !isCorrectLetter ? 'bg-rose-100 border-rose-300 text-rose-900 font-bold' :
+                                              !isSelected && isCorrectLetter ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+                                              'bg-white border-slate-200 text-slate-600'
+                                            }`}>
+                                              <span className="font-bold mr-1">{letter}.</span> {opt}
+                                              {isSelected && <span className="text-[9px] uppercase font-black ml-1.5 text-slate-600">(Đã chọn)</span>}
+                                              {isCorrectLetter && <span className="text-[9px] uppercase font-black ml-1.5 text-emerald-700">(Đúng)</span>}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
               </div>
-              );
-            })()}
+            );
+          })()}
 
           </div>
         )) : adminTab === 'materials' ? (

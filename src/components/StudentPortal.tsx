@@ -73,15 +73,16 @@ export default function StudentPortal({
         .then((records) => {
           const map: Record<string, Candidate> = {};
           records.forEach((r) => {
-            if (r.examId) {
-              map[r.examId] = r;
+            const exId = r.examId || 'default-exam';
+            if (!map[exId] || (!map[exId].submittedAt && r.submittedAt)) {
+              map[exId] = r;
             }
           });
           setCandidateExamsMap(map);
         })
         .catch((err) => console.warn('Error loading candidate exam statuses:', err));
     }
-  }, [candidate?.phone, candidate?.examId, activeExam?.id, testCompleted]);
+  }, [candidate?.phone, candidate?.examId, activeExam?.id]);
   
   // Preview Modal States
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
@@ -365,7 +366,7 @@ export default function StudentPortal({
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {exams.map((ex) => {
                       const isCurrent = (activeExam?.id || exams[0]?.id) === ex.id;
-                      const cardCand = candidateExamsMap[ex.id];
+                      const cardCand = candidateExamsMap[ex.id] || (candidate?.examId === ex.id ? candidate : null);
                       const isCardSubmitted = Boolean(cardCand?.submittedAt);
                       const isCardInProgress = Boolean(!isCardSubmitted && cardCand?.durationSeconds && cardCand.durationSeconds > 0);
                       
@@ -454,7 +455,7 @@ export default function StudentPortal({
               {/* Exam Info Matrix */}
               {(() => {
                 const currentActiveCand = candidateExamsMap[activeExam?.id] || (candidate?.examId === activeExam?.id ? candidate : null);
-                const isCurrentSubmitted = Boolean(currentActiveCand?.submittedAt || testCompleted);
+                const isCurrentSubmitted = Boolean(currentActiveCand?.submittedAt);
                 const isCurrentInProgress = Boolean(!isCurrentSubmitted && currentActiveCand?.durationSeconds && currentActiveCand.durationSeconds > 0);
 
                 return (

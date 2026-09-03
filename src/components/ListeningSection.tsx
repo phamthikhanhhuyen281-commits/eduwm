@@ -949,30 +949,69 @@ export default function ListeningSection({
                 <div className="border border-slate-150 rounded-2xl p-6 md:p-8 bg-slate-50/30 shadow-sm space-y-4">
                   {questionsPart2.map((q, idx) => {
                     const currentAnswer = answers[q.id] || '';
+                    const isSkipped = currentAnswer === '__SKIPPED__';
+
                     return (
                       <div
                         key={q.id}
                         id={`listening-q-${q.id}`}
                         className={`p-4 rounded-xl border transition-all ${
-                          currentAnswer ? 'border-indigo-100 bg-indigo-50/15' : 'border-slate-150 bg-slate-50/20'
+                          isSkipped
+                            ? 'border-amber-300 bg-amber-50/40'
+                            : currentAnswer
+                            ? 'border-indigo-100 bg-indigo-50/15'
+                            : 'border-slate-150 bg-slate-50/20'
                         }`}
                       >
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-slate-700 text-xs md:text-sm">
-                          <span className="text-xs font-bold font-mono text-indigo-900 bg-indigo-100/70 px-2 py-0.5 rounded-md shrink-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-slate-700 text-xs md:text-sm">
+                          <span className="text-xs font-bold font-mono text-indigo-900 bg-indigo-100/70 px-2.5 py-1 rounded-md shrink-0">
                             Q{(idx + 1 + questionsPart1.length).toString().padStart(2, '0')}
                           </span>
                           <span className="font-bold text-slate-800 leading-snug grow">{q.text || q.question}</span>
-                          <input
-                            type="text"
-                            id={`input-blank-${q.id}`}
-                            placeholder="Nhập câu trả lời..."
-                            value={currentAnswer}
-                            onChange={(e) => {
-                              onAnswerChange(q.id, e.target.value);
-                              setCurrentQuestionId(q.id);
-                            }}
-                            className="border-b-2 border-indigo-300 focus:border-indigo-600 focus:bg-indigo-50/30 outline-none px-2 font-bold text-indigo-950 min-w-[150px] bg-transparent py-0.5 text-center transition-all text-xs placeholder:text-slate-300"
-                          />
+
+                          {isSkipped ? (
+                            <div className="flex items-center gap-2 bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg text-xs font-bold shrink-0">
+                              <span>⚠️ Đã bỏ qua câu này</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onAnswerChange(q.id, '');
+                                  setCurrentQuestionId(q.id);
+                                }}
+                                className="text-indigo-900 hover:text-indigo-700 underline font-black uppercase text-[11px] cursor-pointer ml-1"
+                              >
+                                Làm lại
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <input
+                                type="text"
+                                id={`input-blank-${q.id}`}
+                                placeholder="Nhập câu trả lời..."
+                                value={currentAnswer}
+                                onChange={(e) => {
+                                  onAnswerChange(q.id, e.target.value);
+                                  setCurrentQuestionId(q.id);
+                                }}
+                                className="border-b-2 border-indigo-300 focus:border-indigo-600 focus:bg-indigo-50/30 outline-none px-2 font-bold text-indigo-950 min-w-[150px] bg-transparent py-1 text-center transition-all text-xs placeholder:text-slate-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSkipQuestion(q.id);
+                                  onAnswerChange(q.id, '__SKIPPED__');
+                                  setCurrentQuestionId(q.id);
+                                }}
+                                className="px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-amber-800 hover:bg-amber-100/80 border border-slate-200 rounded-lg transition-colors cursor-pointer shrink-0 uppercase"
+                                title="Bỏ qua câu này nếu không biết làm"
+                              >
+                                Bỏ qua
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

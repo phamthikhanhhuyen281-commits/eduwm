@@ -1167,10 +1167,38 @@ export const candidateService = {
 
   async deleteCandidate(id: string): Promise<void> {
     try {
+      const cand = await this.getCandidateById(id).catch(() => null);
       await deleteDoc(doc(db, 'candidates', id));
+
+      if (cand && cand.phone) {
+        try {
+          const colRef = collection(db, 'candidates');
+          const q = query(colRef, where('phone', '==', cand.phone.trim()));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            const data = d.data();
+            if ((data.examId || 'default-exam') === (cand.examId || 'default-exam')) {
+              await deleteDoc(d.ref).catch(() => {});
+            }
+          }
+        } catch (e) {
+          console.warn('Error cleaning up duplicate candidates:', e);
+        }
+      }
     } catch (err) {
       console.error('Error deleting candidate:', err);
       throw err;
+    }
+
+    try {
+      await fetch(`/api/admin/candidates/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': 'Bearer PlAcEmEnT_TeSt_SeCrEt_Token'
+        }
+      });
+    } catch (e) {
+      console.warn('Server deleteCandidate fallback error:', e);
     }
   },
 

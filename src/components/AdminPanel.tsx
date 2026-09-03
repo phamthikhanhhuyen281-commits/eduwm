@@ -371,18 +371,26 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
   };
 
-  const handleAdminDeleteExam = async (id: string, title: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa đề thi "${title}"? Thao tác này không thể hoàn tác.`)) {
-      return;
-    }
-    try {
-      await examService.deleteExam(id);
-      setSelectedExamIds((prev) => prev.filter((item) => item !== id));
-      showAlert('Đã xóa', 'Xóa đề thi thành công!', 'success');
-      fetchExams();
-    } catch (err: any) {
-      showAlert('Thất bại', err.message, 'error');
-    }
+  const handleAdminDeleteExam = (id: string, title: string) => {
+    setConfirmModalConfig({
+      title: 'XÓA ĐỀ THI',
+      description: (
+        <>Bạn có chắc chắn muốn xóa đề thi <strong>"{title}"</strong> không? Thao tác này không thể hoàn tác.</>
+      ),
+      confirmText: 'Xóa đề thi',
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        try {
+          await examService.deleteExam(id);
+          setSelectedExamIds((prev) => prev.filter((item) => item !== id));
+          showAlert('Đã xóa', 'Xóa đề thi thành công!', 'success');
+          await fetchExams();
+        } catch (err: any) {
+          showAlert('Thất bại', err.message, 'error');
+        }
+      }
+    });
+    setShowConfirmModal(true);
   };
 
   const handleToggleSelectExam = (id: string) => {
@@ -403,42 +411,49 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
   };
 
-  const handleBulkDeleteExams = async () => {
+  const handleBulkDeleteExams = () => {
     if (selectedExamIds.length === 0) return;
     const count = selectedExamIds.length;
-    if (!window.confirm(`Bạn có chắc chắn muốn XÓA VĨNH VIỄN ${count} đề thi đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.`)) {
-      return;
-    }
-
-    setIsBulkDeletingExams(true);
-    try {
-      let successCount = 0;
-      for (const id of selectedExamIds) {
-        if (id === 'default-exam') continue;
+    setConfirmModalConfig({
+      title: 'XÓA HÀNG LOẠT ĐỀ THI',
+      description: (
+        <>Bạn có chắc chắn muốn <strong className="text-red-600 font-extrabold">XÓA VĨNH VIỄN {count} ĐỀ THI</strong> đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.</>
+      ),
+      confirmText: `Xóa ${count} đề thi`,
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        setIsBulkDeletingExams(true);
         try {
-          await examService.deleteExam(id);
-          successCount++;
-          if (editingExamId === id) {
-            setEditingExamId(null);
-            setExamTitle('');
-            setExamDesc('');
-            setExamDuration(45);
-            setExamAudio1Url('');
-            setExamAudio2Url('');
-            setExamQuestionsJson('');
+          let successCount = 0;
+          for (const id of selectedExamIds) {
+            if (id === 'default-exam') continue;
+            try {
+              await examService.deleteExam(id);
+              successCount++;
+              if (editingExamId === id) {
+                setEditingExamId(null);
+                setExamTitle('');
+                setExamDesc('');
+                setExamDuration(45);
+                setExamAudio1Url('');
+                setExamAudio2Url('');
+                setExamQuestionsJson('');
+              }
+            } catch (e) {
+              console.error(`Error deleting exam ${id}:`, e);
+            }
           }
-        } catch (e) {
-          console.error(`Error deleting exam ${id}:`, e);
+          setSelectedExamIds([]);
+          showAlert('Thành công', `Đã xóa thành công ${successCount} đề thi!`, 'success');
+          await fetchExams();
+        } catch (err: any) {
+          showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt đề thi.', 'error');
+        } finally {
+          setIsBulkDeletingExams(false);
         }
       }
-      setSelectedExamIds([]);
-      showAlert('Thành công', `Đã xóa thành công ${successCount} đề thi!`, 'success');
-      await fetchExams();
-    } catch (err: any) {
-      showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt đề thi.', 'error');
-    } finally {
-      setIsBulkDeletingExams(false);
-    }
+    });
+    setShowConfirmModal(true);
   };
 
   const handleSaveExamFromBuilder = async (examData: {
@@ -1048,22 +1063,6 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
   const [gradingLoading, setGradingLoading] = useState(false);
   const [gradingSuccess, setGradingSuccess] = useState(false);
 
-  // Custom Confirmation Modal state
-  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
-  const [confirmModalConfig, setConfirmModalConfig] = useState<{
-    type: 'reset' | 'delete';
-    id: string;
-    name: string;
-  } | null>(null);
-
-  // Custom Alert Modal state
-  const [alertConfig, setAlertConfig] = useState<{
-    show: boolean;
-    title: string;
-    message: string;
-    type: 'success' | 'error';
-  } | null>(null);
-
   // Check saved admin session on mount
   useEffect(() => {
     const savedToken = localStorage.getItem('admin_token');
@@ -1440,35 +1439,42 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
   };
 
-  const handleBulkDeleteCandidates = async () => {
+  const handleBulkDeleteCandidates = () => {
     if (selectedCandidateIds.length === 0) return;
     const count = selectedCandidateIds.length;
-    if (!window.confirm(`Bạn có chắc chắn muốn XÓA VĨNH VIỄN ${count} thí sinh đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.`)) {
-      return;
-    }
-
-    setIsBulkDeletingCandidates(true);
-    try {
-      let successCount = 0;
-      for (const id of selectedCandidateIds) {
+    setConfirmModalConfig({
+      title: 'XÓA HÀNG LOẠT THÍ SINH',
+      description: (
+        <>Bạn có chắc chắn muốn <strong className="text-red-600 font-extrabold">XÓA VĨNH VIỄN {count} THÍ SINH</strong> đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.</>
+      ),
+      confirmText: `Xóa ${count} thí sinh`,
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        setIsBulkDeletingCandidates(true);
         try {
-          await candidateService.deleteCandidate(id);
-          successCount++;
-          if (selectedCandidate && selectedCandidate.id === id) {
-            handleCloseDetail();
+          let successCount = 0;
+          for (const id of selectedCandidateIds) {
+            try {
+              await candidateService.deleteCandidate(id);
+              successCount++;
+              if (selectedCandidate && selectedCandidate.id === id) {
+                handleCloseDetail();
+              }
+            } catch (e) {
+              console.error(`Error deleting candidate ${id}:`, e);
+            }
           }
-        } catch (e) {
-          console.error(`Error deleting candidate ${id}:`, e);
+          setSelectedCandidateIds([]);
+          showAlert('Thành công', `Đã xóa thành công ${successCount} thí sinh khỏi hệ thống!`, 'success');
+          await fetchCandidates();
+        } catch (err: any) {
+          showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt thí sinh.', 'error');
+        } finally {
+          setIsBulkDeletingCandidates(false);
         }
       }
-      setSelectedCandidateIds([]);
-      showAlert('Thành công', `Đã xóa thành công ${successCount} thí sinh khỏi hệ thống!`, 'success');
-      await fetchCandidates();
-    } catch (err: any) {
-      showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt thí sinh.', 'error');
-    } finally {
-      setIsBulkDeletingCandidates(false);
-    }
+    });
+    setShowConfirmModal(true);
   };
 
   const handleResetCandidate = (id: string, name: string) => {
@@ -1478,8 +1484,20 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
   const handleConfirmedAction = async () => {
     if (!confirmModalConfig) return;
-    const { type, id, name } = confirmModalConfig;
+    const config = confirmModalConfig;
     setShowConfirmModal(false);
+
+    if (config.onConfirm) {
+      try {
+        await config.onConfirm();
+      } catch (err: any) {
+        showAlert('Thất bại', err.message || 'Đã xảy ra lỗi khi thực hiện hành động.', 'error');
+      }
+      return;
+    }
+
+    const { type, id, name } = config;
+    if (!id) return;
 
     if (type === 'delete') {
       try {
@@ -1628,29 +1646,27 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
   };
 
-  const handleDeleteMaterial = async (id: string) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa tài liệu này không?')) return;
-
-    try {
-      await materialService.deleteMaterial(id);
-      setSelectedMaterialIds((prev) => prev.filter((item) => item !== id));
-      await fetchMaterials();
-      
-      setAlertConfig({
-        show: true,
-        title: 'Thành công',
-        message: 'Đã xóa tài liệu thành công.',
-        type: 'success'
-      });
-    } catch (e: any) {
-      console.error(e);
-      setAlertConfig({
-        show: true,
-        title: 'Lỗi',
-        message: e.message || 'Có lỗi xảy ra khi xóa tài liệu.',
-        type: 'error'
-      });
-    }
+  const handleDeleteMaterial = (id: string, title?: string) => {
+    setConfirmModalConfig({
+      title: 'XÓA TÀI LIỆU',
+      description: (
+        <>Bạn có chắc chắn muốn xóa tài liệu <strong className="font-bold">"{title || 'này'}"</strong> không? Thao tác này KHÔNG THỂ hoàn tác.</>
+      ),
+      confirmText: 'Xóa tài liệu',
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        try {
+          await materialService.deleteMaterial(id);
+          setSelectedMaterialIds((prev) => prev.filter((item) => item !== id));
+          await fetchMaterials();
+          showAlert('Thành công', 'Đã xóa tài liệu thành công.', 'success');
+        } catch (e: any) {
+          console.error(e);
+          showAlert('Lỗi', e.message || 'Có lỗi xảy ra khi xóa tài liệu.', 'error');
+        }
+      }
+    });
+    setShowConfirmModal(true);
   };
 
   const handleToggleSelectMaterial = (id: string) => {
@@ -1669,32 +1685,39 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
     }
   };
 
-  const handleBulkDeleteMaterials = async () => {
+  const handleBulkDeleteMaterials = () => {
     if (selectedMaterialIds.length === 0) return;
     const count = selectedMaterialIds.length;
-    if (!window.confirm(`Bạn có chắc chắn muốn XÓA ${count} tài liệu đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.`)) {
-      return;
-    }
-
-    setIsBulkDeletingMaterials(true);
-    try {
-      let successCount = 0;
-      for (const id of selectedMaterialIds) {
+    setConfirmModalConfig({
+      title: 'XÓA HÀNG LOẠT TÀI LIỆU',
+      description: (
+        <>Bạn có chắc chắn muốn <strong className="text-red-600 font-extrabold">XÓA {count} TÀI LIỆU</strong> đã chọn không? Thao tác này KHÔNG THỂ hoàn tác.</>
+      ),
+      confirmText: `Xóa ${count} tài liệu`,
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        setIsBulkDeletingMaterials(true);
         try {
-          await materialService.deleteMaterial(id);
-          successCount++;
-        } catch (e) {
-          console.error(`Error deleting material ${id}:`, e);
+          let successCount = 0;
+          for (const id of selectedMaterialIds) {
+            try {
+              await materialService.deleteMaterial(id);
+              successCount++;
+            } catch (e) {
+              console.error(`Error deleting material ${id}:`, e);
+            }
+          }
+          setSelectedMaterialIds([]);
+          showAlert('Thành công', `Đã xóa thành công ${successCount} tài liệu!`, 'success');
+          await fetchMaterials();
+        } catch (err: any) {
+          showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt tài liệu.', 'error');
+        } finally {
+          setIsBulkDeletingMaterials(false);
         }
       }
-      setSelectedMaterialIds([]);
-      showAlert('Thành công', `Đã xóa thành công ${successCount} tài liệu!`, 'success');
-      await fetchMaterials();
-    } catch (err: any) {
-      showAlert('Thất bại', err.message || 'Lỗi khi xóa hàng loạt tài liệu.', 'error');
-    } finally {
-      setIsBulkDeletingMaterials(false);
-    }
+    });
+    setShowConfirmModal(true);
   };
 
   // Export Table to CSV
@@ -2227,6 +2250,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                           type="checkbox"
                           checked={selectedMaterialIds.includes(m.id)}
                           onChange={() => handleToggleSelectMaterial(m.id)}
+                          onClick={(e) => e.stopPropagation()}
                           className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
                           title="Chọn tài liệu này để xóa"
                         />
@@ -2286,7 +2310,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
 
                         {/* Delete Button */}
                         <button
-                          onClick={() => handleDeleteMaterial(m.id)}
+                          onClick={() => handleDeleteMaterial(m.id, m.title)}
                           className="text-rose-600 hover:text-rose-800 p-2 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                           title="Xóa tài liệu"
                         >
@@ -3964,6 +3988,7 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={() => handleToggleSelectCandidate(c.id)}
+                                onClick={(e) => e.stopPropagation()}
                                 className="w-4 h-4 rounded text-indigo-900 focus:ring-indigo-900 border-slate-300 cursor-pointer"
                                 title="Chọn thí sinh này để xóa"
                               />
@@ -5111,29 +5136,37 @@ export default function AdminPanel({ onBackToTest }: AdminPanelProps) {
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-250 shadow-2xl p-6 max-w-md w-full space-y-4 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 text-amber-600">
               <ShieldAlert className="w-8 h-8 shrink-0" />
-              <h3 className="text-base font-black uppercase text-indigo-950 dark:text-slate-100">XÁC NHẬN HÀNH ĐỘNG</h3>
+              <h3 className="text-base font-black uppercase text-indigo-950 dark:text-slate-100">
+                {confirmModalConfig.title || 'XÁC NHẬN HÀNH ĐỘNG'}
+              </h3>
             </div>
-            <p className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
-              {confirmModalConfig.type === 'delete' ? (
+            <div className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
+              {confirmModalConfig.description ? (
+                confirmModalConfig.description
+              ) : confirmModalConfig.type === 'delete' ? (
                 <>Bạn có chắc chắn muốn <strong className="text-red-600 dark:text-red-400 font-extrabold">XÓA VĨNH VIỄN</strong> bài làm và thông tin của thí sinh <strong className="dark:text-white font-extrabold">"{confirmModalConfig.name}"</strong> không? Thao tác này KHÔNG THỂ khôi phục.</>
               ) : (
                 <>Bạn có chắc chắn muốn <strong className="text-amber-600 dark:text-amber-400 font-extrabold font-mono">RESET</strong> lại toàn bộ bài làm của thí sinh <strong className="dark:text-white font-extrabold">"{confirmModalConfig.name}"</strong>? Thí sinh sẽ được phép đăng ký và thi lại từ đầu.</>
               )}
-            </p>
+            </div>
             <div className="flex justify-end gap-2.5 pt-2">
               <button
+                type="button"
                 onClick={() => setShowConfirmModal(false)}
                 className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors cursor-pointer"
               >
                 Hủy bỏ
               </button>
               <button
+                type="button"
                 onClick={handleConfirmedAction}
                 className={`px-4 py-2 text-xs font-bold text-white rounded-lg transition-colors cursor-pointer ${
-                  confirmModalConfig.type === 'delete' ? 'bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
+                  confirmModalConfig.confirmStyle === 'warning'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700'
                 }`}
               >
-                Xác nhận
+                {confirmModalConfig.confirmText || 'Xác nhận'}
               </button>
             </div>
           </div>

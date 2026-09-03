@@ -27,14 +27,12 @@ export const materialService = {
         snap.forEach((d) => {
           list.push({ id: d.id, ...d.data() } as Material);
         });
-        if (list.length > 0) {
-          try {
-            localStorage.setItem(CACHE_KEY, JSON.stringify(list));
-          } catch (e) {
-            // ignore localStorage quota errors
-          }
-          return list;
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(list));
+        } catch (e) {
+          // ignore localStorage quota errors
         }
+        return list;
       } catch (err: any) {
         console.warn(`getMaterials Firestore attempt ${attempt} failed:`, err);
         if (attempt < 3) {

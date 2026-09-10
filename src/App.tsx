@@ -634,11 +634,11 @@ export default function App() {
     }
   };
 
-  const DEFAULT_AUDIO_1 = '/audio/hotel_checkin.wav';
-  const DEFAULT_AUDIO_2 = '/audio/rented_properties.wav';
+  const DEFAULT_AUDIO_1 = '/audio/hotel_checkin.mp3';
+  const DEFAULT_AUDIO_2 = '/audio/rented_properties.mp3';
 
   const getValidAudioUrl = (url: string | undefined, fallback: string) => {
-    if (!url || !url.trim() || url.includes('storage.m3cdn.xyz')) {
+    if (!url || !url.trim() || url.includes('storage.m3cdn.xyz') || url.endsWith('.wav')) {
       return fallback;
     }
     return url;

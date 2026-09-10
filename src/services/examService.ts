@@ -38,11 +38,11 @@ export interface Exam {
 export function sanitizeExamAudioUrls(exam: Exam): Exam {
   let audio1 = exam.audio1Url;
   let audio2 = exam.audio2Url;
-  if (!audio1 || !audio1.trim() || audio1.includes('storage.m3cdn.xyz')) {
-    audio1 = '/audio/hotel_checkin.wav';
+  if (!audio1 || !audio1.trim() || audio1.includes('storage.m3cdn.xyz') || audio1.endsWith('.wav')) {
+    audio1 = '/audio/hotel_checkin.mp3';
   }
-  if (!audio2 || !audio2.trim() || audio2.includes('storage.m3cdn.xyz')) {
-    audio2 = '/audio/rented_properties.wav';
+  if (!audio2 || !audio2.trim() || audio2.includes('storage.m3cdn.xyz') || audio2.endsWith('.wav')) {
+    audio2 = '/audio/rented_properties.mp3';
   }
   return {
     ...exam,
@@ -63,8 +63,8 @@ export const examService = {
           title: 'Đề Thi Thử Đánh Giá Năng Lực Tiếng Anh',
           description: 'Bài thi đánh giá tổng hợp 4 kỹ năng: Nghe, Nói, Đọc, Viết, Ngữ pháp & Từ vựng.',
           durationMinutes: 45,
-          audio1Url: '/audio/hotel_checkin.wav',
-          audio2Url: '/audio/rented_properties.wav',
+          audio1Url: '/audio/hotel_checkin.mp3',
+          audio2Url: '/audio/rented_properties.mp3',
           questions: {
             listeningPart1: LISTENING_PART_1,
             listeningPart2: LISTENING_PART_2,

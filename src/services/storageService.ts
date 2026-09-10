@@ -52,9 +52,61 @@ async function getFromIndexedDB(key: string): Promise<Blob | string | null> {
   }
 }
 
+async function deleteFromIndexedDB(key: string): Promise<void> {
+  try {
+    const db = await getIndexedDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.delete(key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+    });
+  } catch (err) {
+    // ignore
+  }
+}
+
+export function createPlayableBlobUrl(urlOrData: string | Blob | null | undefined): string {
+  if (!urlOrData) return '';
+  if (urlOrData instanceof Blob) {
+    return URL.createObjectURL(urlOrData);
+  }
+  if (typeof urlOrData !== 'string') return '';
+  
+  if (urlOrData.startsWith('blob:') || urlOrData.startsWith('http://') || urlOrData.startsWith('https://') || urlOrData.startsWith('/')) {
+    return urlOrData;
+  }
+  
+  // If base64 data URI, iOS Safari AVPlayer fails to play data:audio/mp4;base64 directly.
+  // Convert into a local Blob URL so Safari's native AVPlayer can stream it smoothly!
+  if (urlOrData.startsWith('data:')) {
+    try {
+      const parts = urlOrData.split(',');
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'audio/mp4';
+      const bstr = atob(parts[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      const blob = new Blob([u8arr], { type: mime });
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.warn('Failed converting data URI to blob url:', e);
+      return urlOrData;
+    }
+  }
+  
+  return urlOrData;
+}
+
 export const storageService = {
   saveLocalAudio: saveToIndexedDB,
   getLocalAudio: getFromIndexedDB,
+  removeLocalAudio: deleteFromIndexedDB,
+  createPlayableBlobUrl,
   saveLocalFile: saveToIndexedDB,
   getLocalFile: getFromIndexedDB,
 

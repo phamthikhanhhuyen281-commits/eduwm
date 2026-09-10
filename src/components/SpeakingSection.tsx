@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Check, RefreshCw, AlertCircle, Play, Sparkles, Volume2 } from 'lucide-react';
+import { Mic, Square, Check, RefreshCw, AlertCircle, Play, Sparkles, Volume2, RotateCcw } from 'lucide-react';
 import { candidateService } from '../services/candidateService';
-import { storageService } from '../services/storageService';
+import { storageService, createPlayableBlobUrl } from '../services/storageService';
 import { speakingService } from '../services/speakingService';
+import { SpeakingAudioPlayer } from './SpeakingAudioPlayer';
 
 interface SpeakingSectionProps {
   candidateId: string;
@@ -30,7 +31,7 @@ export default function SpeakingSection({
   const audioChunks = useRef<Record<string, Blob[]>>({});
   const timers = useRef<Record<string, NodeJS.Timeout>>({});
 
-  // Restore recorded audios from existing candidate answers
+  // Restore recorded audios from existing candidate answers and IndexedDB
   useEffect(() => {
     if (answers) {
       const initialDone: Record<string, 'idle' | 'recording' | 'saving' | 'done'> = {};
@@ -38,7 +39,8 @@ export default function SpeakingSection({
       ['speaking_p1', 'speaking_p2_q1', 'speaking_p2_q2', 'speaking_p2_q3'].forEach(k => {
         if (answers[k]) {
           initialDone[k] = 'done';
-          initialUrls[k] = answers[k];
+          // Use createPlayableBlobUrl to ensure base64 is converted to a native Blob URL for iOS
+          initialUrls[k] = createPlayableBlobUrl(answers[k]);
         }
       });
       setRecordingState(prev => ({ ...initialDone, ...prev }));
@@ -64,24 +66,86 @@ export default function SpeakingSection({
       // Clean up stream immediately
       stream.getTracks().forEach(track => track.stop());
     } catch (err) {
-      console.error('Microphone permission rejected:', err);
+      console.warn('Microphone permission not granted yet:', err);
       setPermission(false);
     }
   };
 
   useEffect(() => {
-    requestPermission();
+    // Only check if mediaDevices is supported
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      requestPermission();
+    }
   }, []);
 
+  // Reset recording to allow candidate to re-record in case of error or audio issue
+  const handleResetRecording = async (id: string) => {
+    const confirmMsg = 'Bạn có chắc chắn muốn xóa bản ghi âm này và ghi âm lại không?';
+    if (!window.confirm(confirmMsg)) return;
+
+    // Stop active recorder/timers if any
+    if (timers.current[id]) {
+      clearInterval(timers.current[id]);
+    }
+    if (mediaRecorders.current[id] && mediaRecorders.current[id].state === 'recording') {
+      try {
+        mediaRecorders.current[id].stop();
+      } catch (e) {}
+    }
+    audioChunks.current[id] = [];
+
+    // Reset local component states
+    setRecordingState(prev => ({ ...prev, [id]: 'idle' }));
+    setRecordingSeconds(prev => ({ ...prev, [id]: 0 }));
+    setAudioUrls(prev => {
+      const updated = { ...prev };
+      delete updated[id];
+      return updated;
+    });
+
+    // Notify parent state
+    onAnswerChange(id, '');
+
+    // Reset in candidate document in DB
+    let answersUpdate: any = {};
+    if (id === 'speaking_p1') {
+      answersUpdate.speakingPart1 = { audioPath: null, aiEvaluation: null };
+    } else if (id === 'speaking_p2_q1') {
+      answersUpdate.speakingPart2 = { sp_1_audioPath: null };
+    } else if (id === 'speaking_p2_q2') {
+      answersUpdate.speakingPart2 = { sp_2_audioPath: null };
+    } else if (id === 'speaking_p2_q3') {
+      answersUpdate.speakingPart2 = { sp_3_audioPath: null };
+    }
+
+    try {
+      await candidateService.updateAnswers(candidateId, answersUpdate);
+    } catch (err) {
+      console.warn('Failed to reset candidate speaking answer in DB:', err);
+    }
+
+    // Clear local storage / indexedDB caches
+    try {
+      await storageService.removeLocalAudio(`${candidateId}_${id}`);
+      const backupKey = `offline_speaking_${candidateId}`;
+      const existingBackup = JSON.parse(localStorage.getItem(backupKey) || '{}');
+      delete existingBackup[id];
+      localStorage.setItem(backupKey, JSON.stringify(existingBackup));
+    } catch (e) {}
+  };
+
   const startRecording = async (id: string) => {
-    // If already done, block recording entirely
+    // If already done, notify user they can use the re-record button
     if (answers[id] || recordingState[id] === 'done') {
-      alert('Bạn chỉ được phép ghi âm một lần duy nhất và không thể ghi đè.');
+      const retry = window.confirm('Bài nói này đã được lưu. Bạn có muốn ghi âm lại không?');
+      if (retry) {
+        await handleResetRecording(id);
+      }
       return;
     }
 
     try {
-      let options: any = {};
+      let options: MediaRecorderOptions = {};
       let mimeType = 'audio/webm';
       
       const isIOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
@@ -120,13 +184,28 @@ export default function SpeakingSection({
         mimeType = '';
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, options);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      setPermission(true);
+
+      let mediaRecorder: MediaRecorder;
+      try {
+        mediaRecorder = options.mimeType ? new MediaRecorder(stream, options) : new MediaRecorder(stream);
+      } catch (recInitErr) {
+        console.warn('Fallback to standard MediaRecorder without mimeType options:', recInitErr);
+        mediaRecorder = new MediaRecorder(stream);
+      }
+
       mediaRecorders.current[id] = mediaRecorder;
       audioChunks.current[id] = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunks.current[id].push(event.data);
         }
       };
@@ -139,17 +218,27 @@ export default function SpeakingSection({
           const audioBlob = new Blob(audioChunks.current[id], { type: actualMime });
           const localBlobUrl = URL.createObjectURL(audioBlob);
           
+          // 1. Immediately store the pristine Blob URL for in-browser playback (100% iOS Safari compatible)
+          setAudioUrls(prev => ({ ...prev, [id]: localBlobUrl }));
+
+          // 2. Cache raw Blob to IndexedDB locally
+          try {
+            await storageService.saveLocalAudio(`${candidateId}_${id}`, audioBlob);
+          } catch (cacheErr) {}
+
+          // 3. Upload audio blob with multi-tier storage fallback
           let savedUrl = localBlobUrl;
           try {
-            // Upload audio blob with auto-retry and multi-tier server/cloud/IndexedDB storage
             savedUrl = await storageService.uploadAudioBlob(audioBlob, candidateId, id);
           } catch (uploadErr) {
             console.warn('Storage upload error, using local fallback:', uploadErr);
             savedUrl = localBlobUrl;
           }
 
-          // Store active playable URL
-          setAudioUrls(prev => ({ ...prev, [id]: savedUrl }));
+          // If upload produced a permanent HTTP/HTTPS URL, update audioUrls, otherwise retain localBlobUrl
+          if (savedUrl && (savedUrl.startsWith('http') || savedUrl.startsWith('/'))) {
+            setAudioUrls(prev => ({ ...prev, [id]: savedUrl }));
+          }
 
           // Map the audio path to the proper sub-field of answers
           let answersUpdate: any = {};
@@ -175,7 +264,7 @@ export default function SpeakingSection({
             } catch (e) {}
           }
           
-          // Mark answer as registered (save path as answer value in UI for tracking)
+          // Mark answer as registered
           onAnswerChange(id, savedUrl);
 
           // If speaking_p1 (Read Aloud), trigger Gemini AI Pronunciation scoring automatically in background
@@ -206,7 +295,7 @@ export default function SpeakingSection({
                   }
                 })
                 .catch(() => {
-                  // Ignore AI evaluation failure on Vercel/static deployments
+                  // Ignore AI evaluation failure on static deployments
                 });
             } catch (evalErr) {}
           }
@@ -221,7 +310,11 @@ export default function SpeakingSection({
         }
       };
 
-      mediaRecorder.start(1000);
+      // CRITICAL FOR IOS SAFARI:
+      // DO NOT pass a timeslice (like start(1000)). In WebKit, chunked MP4 recordings produce
+      // corrupted multi-part atoms that cannot be re-concatenated with new Blob(chunks).
+      // Calling start() without arguments produces a single clean, fully valid MP4 file on stop!
+      mediaRecorder.start();
       setRecordingState(prev => ({ ...prev, [id]: 'recording' }));
       setRecordingSeconds(prev => ({ ...prev, [id]: 0 }));
 
@@ -232,18 +325,15 @@ export default function SpeakingSection({
 
     } catch (err) {
       console.error('Failed to start media recording:', err);
-      alert('Không thể kết nối mic. Vui lòng cấp quyền micro cho trang web này trong trình duyệt.');
+      alert('Không thể kết nối mic. Vui lòng cấp quyền micro cho trang web này trong Safari/trình duyệt của bạn.');
     }
   };
 
   const stopRecording = (id: string) => {
     const mediaRecorder = mediaRecorders.current[id];
     if (mediaRecorder && mediaRecorder.state === 'recording') {
-      try {
-        if (typeof mediaRecorder.requestData === 'function') {
-          mediaRecorder.requestData();
-        }
-      } catch (e) {}
+      // NOTE: Do NOT call mediaRecorder.requestData() before stop()!
+      // In Safari iOS, calling requestData() right before stop() emits an unneeded fragmented chunk.
       mediaRecorder.stop();
       if (timers.current[id]) {
         clearInterval(timers.current[id]);
@@ -266,11 +356,11 @@ export default function SpeakingSection({
     const restoreRecordings = async () => {
       if (answers['speaking_p1']) {
         newStates['speaking_p1'] = 'done';
-        newUrls['speaking_p1'] = answers['speaking_p1'];
+        newUrls['speaking_p1'] = createPlayableBlobUrl(answers['speaking_p1']);
       } else if (candidateId) {
         const local = await storageService.getLocalAudio(`${candidateId}_speaking_p1`);
         if (local) {
-          const url = typeof local === 'string' ? local : URL.createObjectURL(local);
+          const url = createPlayableBlobUrl(local);
           newStates['speaking_p1'] = 'done';
           newUrls['speaking_p1'] = url;
           onAnswerChange('speaking_p1', url);
@@ -281,11 +371,11 @@ export default function SpeakingSection({
         const id = `speaking_p2_q${idx + 1}`;
         if (answers[id]) {
           newStates[id] = 'done';
-          newUrls[id] = answers[id];
+          newUrls[id] = createPlayableBlobUrl(answers[id]);
         } else if (candidateId) {
           const local = await storageService.getLocalAudio(`${candidateId}_${id}`);
           if (local) {
-            const url = typeof local === 'string' ? local : URL.createObjectURL(local);
+            const url = createPlayableBlobUrl(local);
             newStates[id] = 'done';
             newUrls[id] = url;
             onAnswerChange(id, url);
@@ -418,8 +508,18 @@ export default function SpeakingSection({
               )}
 
               {recordingState['speaking_p1'] === 'done' && (
-                <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-xl text-xs font-extrabold">
-                  <Check className="w-4 h-4" /> Đã lưu bài nói thành công ✓
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-xl text-xs font-extrabold">
+                    <Check className="w-4 h-4" /> Đã lưu bài nói thành công ✓
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleResetRecording('speaking_p1')}
+                    className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs"
+                    title="Ghi âm lại nếu âm thanh bị lỗi hoặc muốn làm lại"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Ghi âm lại bài này
+                  </button>
                 </div>
               )}
             </div>
@@ -434,17 +534,11 @@ export default function SpeakingSection({
 
           {/* Audio Player Preview for Part 1 */}
           {Boolean((audioUrls['speaking_p1'] && audioUrls['speaking_p1'].trim() !== '') || (answers['speaking_p1'] && answers['speaking_p1'].trim() !== '')) && (
-            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-              <span className="text-xs font-bold text-slate-700 block">Nghe lại bản ghi âm của bạn:</span>
-              <audio
-                src={(audioUrls['speaking_p1'] || answers['speaking_p1']) || undefined}
-                controls
-                playsInline
-                controlsList="nodownload"
-                className="w-full h-8 rounded-lg"
-                preload="metadata"
-              />
-            </div>
+            <SpeakingAudioPlayer
+              src={audioUrls['speaking_p1'] || answers['speaking_p1']}
+              onReset={() => handleResetRecording('speaking_p1')}
+              title="Nghe lại bản ghi âm Phần 1 của bạn:"
+            />
           )}
         </div>
       )}
@@ -530,18 +624,26 @@ export default function SpeakingSection({
                     )}
 
                     {isCompleted && (
-                      <div className="space-y-1.5 pt-1">
-                        <span className="flex items-center justify-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 rounded-lg text-xs font-bold">
-                          <Check className="w-3.5 h-3.5" /> Đã lưu bài nói ✓
-                        </span>
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center justify-between">
+                          <span className="flex items-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 px-2 rounded-lg text-xs font-bold">
+                            <Check className="w-3.5 h-3.5" /> Đã lưu ✓
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleResetRecording(id)}
+                            className="text-xs text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Ghi âm lại câu này"
+                          >
+                            <RotateCcw className="w-3 h-3" /> Ghi lại
+                          </button>
+                        </div>
                         {Boolean((audioUrls[id] && audioUrls[id].trim() !== '') || (answers[id] && answers[id].trim() !== '')) && (
-                          <audio
-                            src={(audioUrls[id] || answers[id]) || undefined}
-                            controls
-                            playsInline
-                            controlsList="nodownload"
-                            className="w-full h-7"
-                            preload="metadata"
+                          <SpeakingAudioPlayer
+                            src={audioUrls[id] || answers[id]}
+                            onReset={() => handleResetRecording(id)}
+                            title={`Nghe lại câu ${idx + 1}:`}
+                            compact
                           />
                         )}
                       </div>

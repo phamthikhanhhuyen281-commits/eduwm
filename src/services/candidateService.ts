@@ -763,14 +763,22 @@ export const candidateService = {
       speakingPart1: {
         ...(candidate.answers?.speakingPart1 || {}),
         ...(parsedUpdate.speakingPart1 || {}),
-        audioPath: parsedUpdate.speakingPart1?.audioPath || candidate.answers?.speakingPart1?.audioPath || null
+        audioPath: (parsedUpdate.speakingPart1 && 'audioPath' in parsedUpdate.speakingPart1)
+          ? parsedUpdate.speakingPart1.audioPath
+          : (candidate.answers?.speakingPart1?.audioPath || null)
       },
       speakingPart2: {
         ...(candidate.answers?.speakingPart2 || {}),
         ...(parsedUpdate.speakingPart2 || {}),
-        sp_1_audioPath: parsedUpdate.speakingPart2?.sp_1_audioPath || candidate.answers?.speakingPart2?.sp_1_audioPath || null,
-        sp_2_audioPath: parsedUpdate.speakingPart2?.sp_2_audioPath || candidate.answers?.speakingPart2?.sp_2_audioPath || null,
-        sp_3_audioPath: parsedUpdate.speakingPart2?.sp_3_audioPath || candidate.answers?.speakingPart2?.sp_3_audioPath || null,
+        sp_1_audioPath: (parsedUpdate.speakingPart2 && 'sp_1_audioPath' in parsedUpdate.speakingPart2)
+          ? parsedUpdate.speakingPart2.sp_1_audioPath
+          : (candidate.answers?.speakingPart2?.sp_1_audioPath || null),
+        sp_2_audioPath: (parsedUpdate.speakingPart2 && 'sp_2_audioPath' in parsedUpdate.speakingPart2)
+          ? parsedUpdate.speakingPart2.sp_2_audioPath
+          : (candidate.answers?.speakingPart2?.sp_2_audioPath || null),
+        sp_3_audioPath: (parsedUpdate.speakingPart2 && 'sp_3_audioPath' in parsedUpdate.speakingPart2)
+          ? parsedUpdate.speakingPart2.sp_3_audioPath
+          : (candidate.answers?.speakingPart2?.sp_3_audioPath || null),
       },
       writing: { ...(candidate.answers?.writing || {}), ...(parsedUpdate.writing || {}) },
       flatAnswers: {

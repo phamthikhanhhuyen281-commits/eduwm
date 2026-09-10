@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Volume2, Headphones, AlertTriangle, HelpCircle, RefreshCw, CheckCircle2, Lock } from 'lucide-react';
+import { Play, Volume2, Headphones, AlertTriangle, HelpCircle, RefreshCw, CheckCircle2, Lock, RotateCcw } from 'lucide-react';
 import { candidateService } from '../services/candidateService';
 
 interface ListeningSectionProps {
@@ -242,6 +242,40 @@ export default function ListeningSection({
     }
   }, [audio1Url, audio2Url, candidateId, candidatePhone, examId, candidateAudioPlayback?.audio1Played, candidateAudioPlayback?.audio2Played]);
 
+  // Reset audio playback handlers (allows re-listening in test mode or if audio failed)
+  const handleResetAudio1 = () => {
+    localStorage.removeItem(getAudio1Key());
+    setAudio1State('idle');
+    setAudio1Progress(0);
+    setAudio1CurrentTime(0);
+    setAudio1ErrorMsg(null);
+    setAudio1UsingFallback(false);
+    if (audio1Ref.current) {
+      audio1Ref.current.currentTime = 0;
+      audio1Ref.current.src = '/audio/hotel_checkin.mp3';
+      audio1Ref.current.load();
+    }
+  };
+
+  const handleResetAudio2 = () => {
+    localStorage.removeItem(getAudio2Key());
+    setAudio2State('idle');
+    setAudio2Progress(0);
+    setAudio2CurrentTime(0);
+    setAudio2ErrorMsg(null);
+    setAudio2UsingFallback(false);
+    if (audio2Ref.current) {
+      audio2Ref.current.currentTime = 0;
+      audio2Ref.current.src = '/audio/rented_properties.mp3';
+      audio2Ref.current.load();
+    }
+  };
+
+  const handleResetAllAudios = () => {
+    handleResetAudio1();
+    handleResetAudio2();
+  };
+
   // Cleanup audio elements on unmount to prevent playing in background
   useEffect(() => {
     return () => {
@@ -313,11 +347,11 @@ export default function ListeningSection({
         console.error('Audio 1 playback failed:', err);
         if (!audio1UsingFallback) {
           setAudio1UsingFallback(true);
-          setAudio1ErrorMsg('Đang chuyển sang nguồn âm thanh dự phòng...');
+          setAudio1ErrorMsg('Đang chuyển sang nguồn âm thanh dự phòng MP3...');
           setTimeout(async () => {
             if (audio1Ref.current) {
               try {
-                audio1Ref.current.src = '/audio/hotel_checkin.wav';
+                audio1Ref.current.src = '/audio/hotel_checkin.mp3';
                 audio1Ref.current.load();
                 await audio1Ref.current.play();
                 localStorage.setItem(getAudio1Key(), 'true');
@@ -382,11 +416,11 @@ export default function ListeningSection({
         console.error('Audio 2 playback failed:', err);
         if (!audio2UsingFallback) {
           setAudio2UsingFallback(true);
-          setAudio2ErrorMsg('Đang chuyển sang nguồn âm thanh dự phòng...');
+          setAudio2ErrorMsg('Đang chuyển sang nguồn âm thanh dự phòng MP3...');
           setTimeout(async () => {
             if (audio2Ref.current) {
               try {
-                audio2Ref.current.src = '/audio/rented_properties.wav';
+                audio2Ref.current.src = '/audio/rented_properties.mp3';
                 audio2Ref.current.load();
                 await audio2Ref.current.play();
                 localStorage.setItem(getAudio2Key(), 'true');
@@ -456,14 +490,14 @@ export default function ListeningSection({
     }
   };
 
-  const safeAudio1Url = (!audio1Url || audio1Url.includes('storage.m3cdn.xyz')) ? '/audio/hotel_checkin.wav' : audio1Url;
-  const safeAudio2Url = (!audio2Url || audio2Url.includes('storage.m3cdn.xyz')) ? '/audio/rented_properties.wav' : audio2Url;
+  const safeAudio1Url = (!audio1Url || audio1Url.includes('storage.m3cdn.xyz') || audio1Url.endsWith('.wav')) ? '/audio/hotel_checkin.mp3' : audio1Url;
+  const safeAudio2Url = (!audio2Url || audio2Url.includes('storage.m3cdn.xyz') || audio2Url.endsWith('.wav')) ? '/audio/rented_properties.mp3' : audio2Url;
 
   const audio1ActualSrc = audio1UsingFallback
-    ? (safeAudio1Url.startsWith('/') ? safeAudio1Url : '/audio/hotel_checkin.wav')
+    ? (safeAudio1Url.startsWith('/') ? safeAudio1Url : '/audio/hotel_checkin.mp3')
     : getProxiedUrl(safeAudio1Url);
   const audio2ActualSrc = audio2UsingFallback
-    ? (safeAudio2Url.startsWith('/') ? safeAudio2Url : '/audio/rented_properties.wav')
+    ? (safeAudio2Url.startsWith('/') ? safeAudio2Url : '/audio/rented_properties.mp3')
     : getProxiedUrl(safeAudio2Url);
 
   return (
@@ -491,8 +525,17 @@ export default function ListeningSection({
           </div>
         </div>
 
-        {/* Sound check test button */}
-        <div className="shrink-0 flex items-center gap-2">
+        {/* Sound check test button & Reset button */}
+        <div className="shrink-0 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleResetAllAudios}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white/90 hover:bg-white border border-slate-200 hover:border-slate-300 transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+            title="Đặt lại trạng thái âm thanh bài thi nếu trước đó bị khóa hoặc không nghe thấy"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-indigo-700" /> ĐẶT LẠI AUDIO 1 & 2
+          </button>
+
           <button
             type="button"
             onClick={handleTestSpeaker}
@@ -568,8 +611,8 @@ export default function ListeningSection({
                       onError={() => {
                         if (!audio1UsingFallback) {
                           setAudio1UsingFallback(true);
-                          if (audio1Ref.current && audio1Ref.current.src !== window.location.origin + '/audio/hotel_checkin.wav') {
-                            audio1Ref.current.src = '/audio/hotel_checkin.wav';
+                          if (audio1Ref.current && audio1Ref.current.src !== window.location.origin + '/audio/hotel_checkin.mp3') {
+                            audio1Ref.current.src = '/audio/hotel_checkin.mp3';
                             audio1Ref.current.load();
                           }
                         }
@@ -601,10 +644,20 @@ export default function ListeningSection({
                   </div>
 
                   {audio1State === 'ended' && (
-                    <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5 pt-1">
-                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                      <span>Bài Audio 1 đã phát xong và được khóa lại theo quy chế thi. Mỗi tài khoản chỉ được nghe 01 lần duy nhất trong kỳ thi.</span>
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                      <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
+                        <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span>Bài Audio 1 đã hoàn thành và được khóa theo quy chế thi.</span>
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleResetAudio1}
+                        className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all"
+                        title="Mở khóa nếu bạn đang làm bài thi thử hoặc gặp sự cố âm thanh"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Mở khóa nghe lại (Thi thử)
+                      </button>
+                    </div>
                   )}
 
                   {audio1ErrorMsg && (
@@ -802,8 +855,8 @@ export default function ListeningSection({
                       onError={() => {
                         if (!audio2UsingFallback) {
                           setAudio2UsingFallback(true);
-                          if (audio2Ref.current && audio2Ref.current.src !== window.location.origin + '/audio/rented_properties.wav') {
-                            audio2Ref.current.src = '/audio/rented_properties.wav';
+                          if (audio2Ref.current && audio2Ref.current.src !== window.location.origin + '/audio/rented_properties.mp3') {
+                            audio2Ref.current.src = '/audio/rented_properties.mp3';
                             audio2Ref.current.load();
                           }
                         }
@@ -835,10 +888,20 @@ export default function ListeningSection({
                   </div>
 
                   {audio2State === 'ended' && (
-                    <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5 pt-1">
-                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                      <span>Bài Audio 2 đã phát xong và được khóa lại theo quy chế thi. Mỗi tài khoản chỉ được nghe 01 lần duy nhất trong kỳ thi.</span>
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                      <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
+                        <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span>Bài Audio 2 đã hoàn thành và được khóa theo quy chế thi.</span>
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleResetAudio2}
+                        className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all"
+                        title="Mở khóa nếu bạn đang làm bài thi thử hoặc gặp sự cố âm thanh"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Mở khóa nghe lại (Thi thử)
+                      </button>
+                    </div>
                   )}
 
                   {audio2ErrorMsg && (

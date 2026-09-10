@@ -55,6 +55,7 @@ import { languageService, Language } from '../services/languageService';
 import LanguageToggle from './LanguageToggle';
 import { DocumentReaderModal } from './DocumentReaderModal';
 import { ManualExamBuilder } from './ManualExamBuilder';
+import { SpeakingAudioPlayer } from './SpeakingAudioPlayer';
 
 interface CandidateSummary {
   id: string;

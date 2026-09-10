@@ -195,6 +195,7 @@ export const storageService = {
     let ext = 'webm';
     if (blob.type.includes('mp4')) ext = 'mp4';
     else if (blob.type.includes('m4a')) ext = 'm4a';
+    else if (blob.type.includes('aac')) ext = 'aac';
     else if (blob.type.includes('wav')) ext = 'wav';
     else if (blob.type.includes('ogg')) ext = 'ogg';
 

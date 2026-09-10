@@ -313,10 +313,11 @@ export default function ListeningSection({
         console.error('Audio 1 playback failed:', err);
         if (!audio1UsingFallback) {
           setAudio1UsingFallback(true);
-          setAudio1ErrorMsg('Đang chuyển đổi phương thức phát âm thanh dự phòng...');
+          setAudio1ErrorMsg('Đang chuyển sang nguồn âm thanh dự phòng...');
           setTimeout(async () => {
             if (audio1Ref.current) {
               try {
+                audio1Ref.current.src = '/audio/hotel_checkin.wav';
                 audio1Ref.current.load();
                 await audio1Ref.current.play();
                 localStorage.setItem(getAudio1Key(), 'true');
@@ -333,7 +334,7 @@ export default function ListeningSection({
                 setAudio1State('idle');
               }
             }
-          }, 300);
+          }, 150);
         } else {
           setAudio1ErrorMsg('Trình duyệt đã chặn âm thanh hoặc file nghe không tải được. Vui lòng bấm vào đây để thử lại.');
           setAudio1State('idle');
@@ -381,10 +382,11 @@ export default function ListeningSection({
         console.error('Audio 2 playback failed:', err);
         if (!audio2UsingFallback) {
           setAudio2UsingFallback(true);
-          setAudio2ErrorMsg('Đang chuyển đổi phương thức phát âm thanh dự phòng...');
+          setAudio2ErrorMsg('Đang chuyển sang nguồn âm thanh dự phòng...');
           setTimeout(async () => {
             if (audio2Ref.current) {
               try {
+                audio2Ref.current.src = '/audio/rented_properties.wav';
                 audio2Ref.current.load();
                 await audio2Ref.current.play();
                 localStorage.setItem(getAudio2Key(), 'true');
@@ -401,7 +403,7 @@ export default function ListeningSection({
                 setAudio2State('idle');
               }
             }
-          }, 300);
+          }, 150);
         } else {
           setAudio2ErrorMsg('Trình duyệt đã chặn âm thanh hoặc file nghe không tải được. Vui lòng bấm vào đây để thử lại.');
           setAudio2State('idle');
@@ -454,12 +456,15 @@ export default function ListeningSection({
     }
   };
 
+  const safeAudio1Url = (!audio1Url || audio1Url.includes('storage.m3cdn.xyz')) ? '/audio/hotel_checkin.wav' : audio1Url;
+  const safeAudio2Url = (!audio2Url || audio2Url.includes('storage.m3cdn.xyz')) ? '/audio/rented_properties.wav' : audio2Url;
+
   const audio1ActualSrc = audio1UsingFallback
-    ? (audio1Url.includes('drive.google.com') ? audio1Url : `/api/audio-proxy?url=${encodeURIComponent(audio1Url)}`)
-    : getProxiedUrl(audio1Url);
+    ? (safeAudio1Url.startsWith('/') ? safeAudio1Url : '/audio/hotel_checkin.wav')
+    : getProxiedUrl(safeAudio1Url);
   const audio2ActualSrc = audio2UsingFallback
-    ? (audio2Url.includes('drive.google.com') ? audio2Url : `/api/audio-proxy?url=${encodeURIComponent(audio2Url)}`)
-    : getProxiedUrl(audio2Url);
+    ? (safeAudio2Url.startsWith('/') ? safeAudio2Url : '/audio/rented_properties.wav')
+    : getProxiedUrl(safeAudio2Url);
 
   return (
     <div id="listening-section-wrapper" className="space-y-6">
@@ -481,7 +486,7 @@ export default function ListeningSection({
               <strong className="uppercase">CHÚ Ý QUAN TRỌNG:</strong> Thí sinh <strong className="underline">CHỈ ĐƯỢC NGHE 1 LẦN DUY NHẤT</strong>. Khi đã nhấn Play, audio sẽ phát liên tục đến hết.
             </p>
             <p className="text-[11px] text-red-800/80 mt-0.5">
-              Vui lòng bấm nút <strong>"Kiểm tra loa / tai nghe"</strong> bên cạnh để đảm bảo thiết bị có âm thanh trước khi bấm làm bài.
+              Vui lòng bấm nút <strong>"Kiểm tra loa / tai nghe"</strong> bên cạnh để đảm bảo thiết bị có âm thanh trước khi bấm làm bài. <span className="font-semibold text-red-900">(Người dùng iPhone/iPad: Hãy gạt tắt cần gạt Im lặng ở cạnh sườn máy và tăng âm lượng nếu không nghe thấy tiếng).</span>
             </p>
           </div>
         </div>
@@ -561,10 +566,15 @@ export default function ListeningSection({
                       onEnded={handleAudio1Ended}
                       onLoadedMetadata={handleAudio1TimeUpdate}
                       onError={() => {
-                        if (!audio1UsingFallback && audio1Url) {
+                        if (!audio1UsingFallback) {
                           setAudio1UsingFallback(true);
+                          if (audio1Ref.current && audio1Ref.current.src !== window.location.origin + '/audio/hotel_checkin.wav') {
+                            audio1Ref.current.src = '/audio/hotel_checkin.wav';
+                            audio1Ref.current.load();
+                          }
                         }
                       }}
+                      playsInline
                       preload="auto"
                       referrerPolicy="no-referrer"
                       controlsList="nodownload"
@@ -790,10 +800,15 @@ export default function ListeningSection({
                       onEnded={handleAudio2Ended}
                       onLoadedMetadata={handleAudio2TimeUpdate}
                       onError={() => {
-                        if (!audio2UsingFallback && audio2Url) {
+                        if (!audio2UsingFallback) {
                           setAudio2UsingFallback(true);
+                          if (audio2Ref.current && audio2Ref.current.src !== window.location.origin + '/audio/rented_properties.wav') {
+                            audio2Ref.current.src = '/audio/rented_properties.wav';
+                            audio2Ref.current.load();
+                          }
                         }
                       }}
+                      playsInline
                       preload="auto"
                       referrerPolicy="no-referrer"
                       controlsList="nodownload"

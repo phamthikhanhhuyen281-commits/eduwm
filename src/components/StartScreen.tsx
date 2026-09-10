@@ -31,6 +31,18 @@ export default function StartScreen({ onRegister, loading, onAdminClick, setting
   const [exams, setExams] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState('default-exam');
   const [isExamLocked, setIsExamLocked] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const isIOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  const isInAppBrowser = typeof navigator !== 'undefined' && /FBAN|FBAV|Instagram|Line|musical_ly|ByteLocale|BytedanceWebview|Zalo|ZaloTheme|Snapchat/i.test(navigator.userAgent);
+
+  const handleCopyLink = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(window.location.href);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 3000);
+    }
+  };
 
   useEffect(() => {
     // 1. Check path first: e.g. /exam/abc123xyz
@@ -165,6 +177,31 @@ export default function StartScreen({ onRegister, loading, onAdminClick, setting
             <p className="text-base md:text-xl text-slate-600 dark:text-slate-300 font-medium mb-8 font-sans max-w-xl mx-auto">
               {settings.slogan || 'Your English Journey Starts Here.'}
             </p>
+
+            {/* iOS In-App Browser Warning Banner */}
+            {isIOS && isInAppBrowser && (
+              <div
+                id="ios-inapp-warning"
+                className="bg-amber-50 border-2 border-amber-400 p-4 rounded-2xl max-w-2xl mx-auto text-left mb-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-3">
+                  <ExternalLink className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-amber-950 font-black text-sm uppercase">Khuyến nghị cho iPhone / iPad (iOS)</h4>
+                    <p className="text-amber-900 text-xs leading-relaxed mt-0.5">
+                      Bạn đang mở trang web trong ứng dụng (Zalo/Facebook). Trình duyệt này có thể chặn quyền Micro và phát âm thanh. Vui lòng bấm dấu <strong>(...)</strong> ở góc trên và chọn <strong>"Mở bằng trình duyệt Safari"</strong> để làm bài thi thuận lợi nhất.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="shrink-0 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs whitespace-nowrap self-stretch sm:self-auto text-center"
+                >
+                  {copiedLink ? '✓ Đã sao chép link' : 'Sao chép liên kết'}
+                </button>
+              </div>
+            )}
 
             {/* Anti-fraud Red Warning */}
             <div

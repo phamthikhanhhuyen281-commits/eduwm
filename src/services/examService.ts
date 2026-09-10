@@ -35,6 +35,22 @@ export interface Exam {
   };
 }
 
+export function sanitizeExamAudioUrls(exam: Exam): Exam {
+  let audio1 = exam.audio1Url;
+  let audio2 = exam.audio2Url;
+  if (!audio1 || !audio1.trim() || audio1.includes('storage.m3cdn.xyz')) {
+    audio1 = '/audio/hotel_checkin.wav';
+  }
+  if (!audio2 || !audio2.trim() || audio2.includes('storage.m3cdn.xyz')) {
+    audio2 = '/audio/rented_properties.wav';
+  }
+  return {
+    ...exam,
+    audio1Url: audio1,
+    audio2Url: audio2
+  };
+}
+
 export const examService = {
   async getExams(): Promise<Exam[]> {
     try {
@@ -47,8 +63,8 @@ export const examService = {
           title: 'Đề Thi Thử Đánh Giá Năng Lực Tiếng Anh',
           description: 'Bài thi đánh giá tổng hợp 4 kỹ năng: Nghe, Nói, Đọc, Viết, Ngữ pháp & Từ vựng.',
           durationMinutes: 45,
-          audio1Url: 'https://storage.m3cdn.xyz/audio/1782652891560-hotel.mp3',
-          audio2Url: 'https://storage.m3cdn.xyz/audio/section%201%20rented%20properties.mp3',
+          audio1Url: '/audio/hotel_checkin.wav',
+          audio2Url: '/audio/rented_properties.wav',
           questions: {
             listeningPart1: LISTENING_PART_1,
             listeningPart2: LISTENING_PART_2,
@@ -66,7 +82,7 @@ export const examService = {
       
       const list: Exam[] = [];
       snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as Exam);
+        list.push(sanitizeExamAudioUrls({ id: d.id, ...d.data() } as Exam));
       });
       return list;
     } catch (err: any) {
@@ -85,7 +101,7 @@ export const examService = {
       const docRef = doc(db, 'exams', id);
       const snap = await getDoc(docRef);
       if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as Exam;
+        return sanitizeExamAudioUrls({ id: snap.id, ...snap.data() } as Exam);
       }
       // If default-exam requested and not found, try to bootstrap
       if (id === 'default-exam') {

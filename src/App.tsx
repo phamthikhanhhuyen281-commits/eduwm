@@ -209,6 +209,7 @@ export default function App() {
   const [previewMaterial, setPreviewMaterial] = useState<any | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const visibilityTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Listen to admin path toggle (can also click in footer)
   useEffect(() => {
@@ -298,15 +299,49 @@ export default function App() {
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        handleTabSwitchDetected();
+        // Debounce / grace period for iOS (2.5 seconds) to avoid false positives when user touches Control Center,
+        // receives a quick notification, or responds to the iOS Safari microphone prompt
+        if (visibilityTimerRef.current) {
+          clearTimeout(visibilityTimerRef.current);
+        }
+        visibilityTimerRef.current = setTimeout(() => {
+          if (document.hidden) {
+            handleTabSwitchDetected();
+          }
+        }, 2500);
+      } else {
+        // User came back within 2.5s (e.g. dismissed notification or closed control center)
+        if (visibilityTimerRef.current) {
+          clearTimeout(visibilityTimerRef.current);
+          visibilityTimerRef.current = null;
+        }
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      if (visibilityTimerRef.current) clearTimeout(visibilityTimerRef.current);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [candidate, testCompleted, isAdminMode, tabSwitches, inTestMode]);
+
+  // Keep screen awake on mobile devices (iOS / Android) during active test
+  useEffect(() => {
+    if (!inTestMode || testCompleted || isAdminMode) return;
+    let wakeLock: any = null;
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      try {
+        (navigator as any).wakeLock.request('screen').then((lock: any) => {
+          wakeLock = lock;
+        }).catch(() => {});
+      } catch (e) {}
+    }
+    return () => {
+      if (wakeLock && typeof wakeLock.release === 'function') {
+        wakeLock.release().catch(() => {});
+      }
+    };
+  }, [inTestMode, testCompleted, isAdminMode]);
 
   const handleTabSwitchDetected = async () => {
     if (!candidate) return;
@@ -599,8 +634,15 @@ export default function App() {
     }
   };
 
-  const DEFAULT_AUDIO_1 = 'https://storage.m3cdn.xyz/audio/1782652891560-hotel.mp3';
-  const DEFAULT_AUDIO_2 = 'https://storage.m3cdn.xyz/audio/section%201%20rented%20properties.mp3';
+  const DEFAULT_AUDIO_1 = '/audio/hotel_checkin.wav';
+  const DEFAULT_AUDIO_2 = '/audio/rented_properties.wav';
+
+  const getValidAudioUrl = (url: string | undefined, fallback: string) => {
+    if (!url || !url.trim() || url.includes('storage.m3cdn.xyz')) {
+      return fallback;
+    }
+    return url;
+  };
 
   // Renders the specific active section
   const renderActiveSection = () => {
@@ -615,8 +657,8 @@ export default function App() {
             setCurrentQuestionId={setCurrentQuestionId}
             questionsPart1={listeningPart1}
             questionsPart2={listeningPart2}
-            audio1Url={activeExam?.audio1Url || DEFAULT_AUDIO_1}
-            audio2Url={activeExam?.audio2Url || DEFAULT_AUDIO_2}
+            audio1Url={getValidAudioUrl(activeExam?.audio1Url, DEFAULT_AUDIO_1)}
+            audio2Url={getValidAudioUrl(activeExam?.audio2Url, DEFAULT_AUDIO_2)}
             examId={activeExam?.id || 'default'}
             candidateId={candidate?.id}
             candidatePhone={candidate?.phone}

@@ -717,6 +717,24 @@ async function startServer() {
       return res.status(400).send('Missing url parameter');
     }
 
+    // Direct local fallback for known exam audios (handling dead external CDN links)
+    if (fileUrl.includes('hotel') || fileUrl.includes('1782652891560')) {
+      const localFile = path.join(process.cwd(), 'public', 'audio', 'hotel_checkin.wav');
+      if (fs.existsSync(localFile)) {
+        res.setHeader('Content-Type', 'audio/wav');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        return res.sendFile(localFile);
+      }
+    }
+    if (fileUrl.includes('rented') || fileUrl.includes('properties')) {
+      const localFile = path.join(process.cwd(), 'public', 'audio', 'rented_properties.wav');
+      if (fs.existsSync(localFile)) {
+        res.setHeader('Content-Type', 'audio/wav');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        return res.sendFile(localFile);
+      }
+    }
+
     // Auto-convert Google Drive viewer/open links to direct download/stream links
     const driveMatch = fileUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
     if (driveMatch && driveMatch[1]) {
@@ -835,6 +853,18 @@ async function startServer() {
       next();
     },
     express.static(path.join(process.cwd(), 'recordings'))
+  );
+
+  // Static serving for built-in audio assets
+  app.use(
+    '/audio',
+    (req, res, next) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      next();
+    },
+    express.static(path.join(process.cwd(), 'public', 'audio'))
   );
 
   // Vite Integration & SPA asset serving

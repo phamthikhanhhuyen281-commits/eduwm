@@ -84,25 +84,36 @@ export default function SpeakingSection({
       let options: any = {};
       let mimeType = 'audio/webm';
       
-      if (typeof MediaRecorder.isTypeSupported === 'function') {
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-          options = { mimeType: 'audio/webm;codecs=opus' };
-          mimeType = 'audio/webm;codecs=opus';
-        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-          options = { mimeType: 'audio/webm' };
-          mimeType = 'audio/webm';
-        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
-          options = { mimeType: 'audio/ogg;codecs=opus' };
-          mimeType = 'audio/ogg;codecs=opus';
-        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-          options = { mimeType: 'audio/mp4' };
-          mimeType = 'audio/mp4';
-        } else if (MediaRecorder.isTypeSupported('audio/aac')) {
-          options = { mimeType: 'audio/aac' };
-          mimeType = 'audio/aac';
-        } else {
-          options = {};
-          mimeType = '';
+      const isIOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+      if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+        if (isIOS) {
+          if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+            mimeType = 'audio/mp4';
+          } else if (MediaRecorder.isTypeSupported('audio/aac')) {
+            options = { mimeType: 'audio/aac' };
+            mimeType = 'audio/aac';
+          }
+        }
+        
+        if (!options.mimeType) {
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus' };
+            mimeType = 'audio/webm;codecs=opus';
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            options = { mimeType: 'audio/webm' };
+            mimeType = 'audio/webm';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+            mimeType = 'audio/mp4';
+          } else if (MediaRecorder.isTypeSupported('audio/aac')) {
+            options = { mimeType: 'audio/aac' };
+            mimeType = 'audio/aac';
+          } else {
+            options = {};
+            mimeType = '';
+          }
         }
       } else {
         options = {};
@@ -124,7 +135,8 @@ export default function SpeakingSection({
         setRecordingState(prev => ({ ...prev, [id]: 'saving' }));
         
         try {
-          const audioBlob = new Blob(audioChunks.current[id], { type: mimeType || mediaRecorder.mimeType || 'audio/webm' });
+          const actualMime = mimeType || mediaRecorder.mimeType || (isIOS ? 'audio/mp4' : 'audio/webm');
+          const audioBlob = new Blob(audioChunks.current[id], { type: actualMime });
           const localBlobUrl = URL.createObjectURL(audioBlob);
           
           let savedUrl = localBlobUrl;
@@ -209,7 +221,7 @@ export default function SpeakingSection({
         }
       };
 
-      mediaRecorder.start(250);
+      mediaRecorder.start(1000);
       setRecordingState(prev => ({ ...prev, [id]: 'recording' }));
       setRecordingSeconds(prev => ({ ...prev, [id]: 0 }));
 
@@ -227,6 +239,11 @@ export default function SpeakingSection({
   const stopRecording = (id: string) => {
     const mediaRecorder = mediaRecorders.current[id];
     if (mediaRecorder && mediaRecorder.state === 'recording') {
+      try {
+        if (typeof mediaRecorder.requestData === 'function') {
+          mediaRecorder.requestData();
+        }
+      } catch (e) {}
       mediaRecorder.stop();
       if (timers.current[id]) {
         clearInterval(timers.current[id]);
@@ -321,11 +338,25 @@ export default function SpeakingSection({
 
       {/* Mic Authorization Check */}
       {permission === false && (
-        <div className="bg-red-50 border-l-4 border-red-600 p-4 rounded-xl flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-          <p className="text-sm font-medium text-red-800">
-            <strong>LỖI: Trình duyệt chưa cấp quyền truy cập Micro.</strong> Vui lòng nhấn vào biểu tượng ổ khóa 🔒 trên thanh địa chỉ của trình duyệt và cho phép (Allow) Microphone để làm bài thi Nói.
-          </p>
+        <div className="bg-red-50 border-l-4 border-red-600 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="text-sm font-medium text-red-800 space-y-1">
+              <p>
+                <strong>CHƯA CẤP QUYỀN MICRO:</strong> Trình duyệt chưa cho phép trang web ghi âm.
+              </p>
+              <p className="text-xs text-red-700 leading-relaxed">
+                Trên Safari iPhone/iPad: Nhấn nút <strong>"Cấp quyền Micro"</strong> bên cạnh, hoặc nhấn biểu tượng <strong>aA / 🔒</strong> trên thanh địa chỉ &gt; Cài đặt trang web &gt; Micro &gt; Cho phép.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={requestPermission}
+            className="shrink-0 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black uppercase tracking-wide transition-all cursor-pointer shadow-sm"
+          >
+            Cấp quyền Micro ngay
+          </button>
         </div>
       )}
 
@@ -408,6 +439,8 @@ export default function SpeakingSection({
               <audio
                 src={(audioUrls['speaking_p1'] || answers['speaking_p1']) || undefined}
                 controls
+                playsInline
+                controlsList="nodownload"
                 className="w-full h-8 rounded-lg"
                 preload="metadata"
               />
@@ -502,7 +535,14 @@ export default function SpeakingSection({
                           <Check className="w-3.5 h-3.5" /> Đã lưu bài nói ✓
                         </span>
                         {Boolean((audioUrls[id] && audioUrls[id].trim() !== '') || (answers[id] && answers[id].trim() !== '')) && (
-                          <audio src={(audioUrls[id] || answers[id]) || undefined} controls className="w-full h-7" preload="metadata" />
+                          <audio
+                            src={(audioUrls[id] || answers[id]) || undefined}
+                            controls
+                            playsInline
+                            controlsList="nodownload"
+                            className="w-full h-7"
+                            preload="metadata"
+                          />
                         )}
                       </div>
                     )}

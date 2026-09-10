@@ -1,26 +1,39 @@
-import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
+import firebaseConfigJson from '../firebase-applet-config.json';
 
-// Firebase configuration from firebase-applet-config.json
+// Firebase configuration using firebase-applet-config.json with optional env overrides
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyA7gULYFYAZpggECZA6g0dgTYrkhwaPQxQ",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "oval-leaf-d9ffs.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "oval-leaf-d9ffs",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "oval-leaf-d9ffs.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "490771641590",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:490771641590:web:c8cf9b0c31593e001da8d7"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId
 };
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Initialize Firestore with custom databaseId if provided
-const dbId = import.meta.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-englishplacement-4951a063-ae8d-4e3c-aef1-cb9ae9e49298";
+// Initialize Firestore with custom databaseId from config or env
+const dbId = import.meta.env.VITE_FIREBASE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId;
 export const db = getFirestore(app, dbId);
 
 export const auth = getAuth(app);
 export const storage = getStorage(app);
+
+// Validate connection to Firestore on boot
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn("Please check your Firebase configuration: client is offline.");
+    }
+  }
+}
+testConnection();
 
 /**
  * Recursively cleans an object or array to ensure it is 100% compliant with Firestore data rules.

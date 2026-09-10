@@ -1,15 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, AlertCircle, Volume2, RefreshCw } from 'lucide-react';
+import { Play, Pause, AlertCircle, Volume2 } from 'lucide-react';
 import { createPlayableBlobUrl } from '../services/storageService';
 
 interface SpeakingAudioPlayerProps {
   src: string;
-  onReset: () => void;
+  onReset?: () => void;
   title?: string;
   compact?: boolean;
 }
 
-export function SpeakingAudioPlayer({ src, onReset, title, compact = false }: SpeakingAudioPlayerProps) {
+export function SpeakingAudioPlayer({ src, title, compact = false }: SpeakingAudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -117,35 +117,23 @@ export function SpeakingAudioPlayer({ src, onReset, title, compact = false }: Sp
           <Volume2 className="w-3.5 h-3.5 text-indigo-700" />
           <span>{title || 'Nghe lại bản ghi âm của bạn:'}</span>
         </div>
-        <button
-          type="button"
-          onClick={onReset}
-          className="text-xs font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
-          title="Bấm để ghi âm lại bài nói này"
-        >
-          <RotateCcw className="w-3 h-3" /> Ghi âm lại
-        </button>
+        <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+          Đã khóa ghi âm (1 lần duy nhất)
+        </span>
       </div>
 
       {/* Error State Banner */}
       {hasError ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-900 space-y-2">
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-900 space-y-1">
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold">Không thể phát âm thanh trên thiết bị này</p>
+              <p className="font-bold">Bản ghi âm đã được ghi nhận</p>
               <p className="text-amber-700 text-[11px] mt-0.5">
-                Bản ghi âm trước đó có thể chưa tương thích với định dạng âm thanh của iOS (Safari). Vui lòng bấm nút bên dưới để ghi âm lại bản mới đạt chuẩn.
+                Bài nói của bạn đã được hệ thống lưu trữ trên máy chủ để gửi cho giáo viên đánh giá.
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onReset}
-            className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" /> Bấm vào đây để Ghi âm lại ngay
-          </button>
         </div>
       ) : (
         /* Custom Modern Audio Player Controls */

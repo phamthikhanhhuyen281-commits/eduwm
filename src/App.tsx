@@ -683,6 +683,8 @@ export default function App() {
         return (
           <SpeakingSection
             candidateId={candidate.id}
+            candidatePhone={candidate.phone}
+            examId={activeExam?.id || 'default-exam'}
             answers={answers}
             onAnswerChange={handleAnswerChange}
             onRefreshSession={() => resumeSession(candidate.id)}

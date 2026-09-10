@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Check, RefreshCw, AlertCircle, Play, Sparkles, Volume2, RotateCcw } from 'lucide-react';
+import { Mic, Square, Check, RefreshCw, AlertCircle, Sparkles, Volume2 } from 'lucide-react';
 import { candidateService } from '../services/candidateService';
 import { storageService, createPlayableBlobUrl } from '../services/storageService';
 import { speakingService } from '../services/speakingService';
@@ -7,6 +7,8 @@ import { SpeakingAudioPlayer } from './SpeakingAudioPlayer';
 
 interface SpeakingSectionProps {
   candidateId: string;
+  candidatePhone?: string;
+  examId?: string;
   answers: Record<string, string>; // to see if speaking recordings already exist
   onAnswerChange: (questionId: string, value: string) => void;
   onRefreshSession: () => void;
@@ -16,6 +18,8 @@ interface SpeakingSectionProps {
 
 export default function SpeakingSection({
   candidateId,
+  candidatePhone,
+  examId,
   answers,
   onAnswerChange,
   onRefreshSession,
@@ -26,27 +30,45 @@ export default function SpeakingSection({
   const [recordingState, setRecordingState] = useState<Record<string, 'idle' | 'recording' | 'saving' | 'done'>>({});
   const [recordingSeconds, setRecordingSeconds] = useState<Record<string, number>>({});
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
+  const [aiSpokenQuestions, setAiSpokenQuestions] = useState<Record<string, boolean>>({});
 
   const mediaRecorders = useRef<Record<string, MediaRecorder>>({});
   const audioChunks = useRef<Record<string, Blob[]>>({});
   const timers = useRef<Record<string, NodeJS.Timeout>>({});
+
+  const cleanCandidate = (candidatePhone || candidateId || 'candidate').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const cleanExam = (examId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  const getSpeakingRecordKey = (qId: string) => `speaking_recorded_${cleanCandidate}_${cleanExam}_${qId}`;
+  const getAiSpeakKey = (qId: string) => `speaking_ai_heard_${cleanCandidate}_${cleanExam}_${qId}`;
+
+  const isQuestionRecorded = (id: string): boolean => {
+    return Boolean(
+      (answers && answers[id] && answers[id].trim() !== '') ||
+      localStorage.getItem(getSpeakingRecordKey(id)) === 'true'
+    );
+  };
 
   // Restore recorded audios from existing candidate answers and IndexedDB
   useEffect(() => {
     if (answers) {
       const initialDone: Record<string, 'idle' | 'recording' | 'saving' | 'done'> = {};
       const initialUrls: Record<string, string> = {};
-      ['speaking_p1', 'speaking_p2_q1', 'speaking_p2_q2', 'speaking_p2_q3'].forEach(k => {
-        if (answers[k]) {
+      const allSpeakingKeys = ['speaking_p1', ...speakingQuestions.map((_, idx) => `speaking_p2_q${idx + 1}`)];
+      
+      allSpeakingKeys.forEach(k => {
+        if (isQuestionRecorded(k) || answers[k]) {
           initialDone[k] = 'done';
-          // Use createPlayableBlobUrl to ensure base64 is converted to a native Blob URL for iOS
-          initialUrls[k] = createPlayableBlobUrl(answers[k]);
+          if (answers[k]) {
+            initialUrls[k] = createPlayableBlobUrl(answers[k]);
+          }
+          localStorage.setItem(getSpeakingRecordKey(k), 'true');
         }
       });
       setRecordingState(prev => ({ ...initialDone, ...prev }));
       setAudioUrls(prev => ({ ...initialUrls, ...prev }));
     }
-  }, [answers]);
+  }, [answers, candidateId, candidatePhone, examId]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -78,69 +100,9 @@ export default function SpeakingSection({
     }
   }, []);
 
-  // Reset recording to allow candidate to re-record in case of error or audio issue
-  const handleResetRecording = async (id: string) => {
-    const confirmMsg = 'Bạn có chắc chắn muốn xóa bản ghi âm này và ghi âm lại không?';
-    if (!window.confirm(confirmMsg)) return;
-
-    // Stop active recorder/timers if any
-    if (timers.current[id]) {
-      clearInterval(timers.current[id]);
-    }
-    if (mediaRecorders.current[id] && mediaRecorders.current[id].state === 'recording') {
-      try {
-        mediaRecorders.current[id].stop();
-      } catch (e) {}
-    }
-    audioChunks.current[id] = [];
-
-    // Reset local component states
-    setRecordingState(prev => ({ ...prev, [id]: 'idle' }));
-    setRecordingSeconds(prev => ({ ...prev, [id]: 0 }));
-    setAudioUrls(prev => {
-      const updated = { ...prev };
-      delete updated[id];
-      return updated;
-    });
-
-    // Notify parent state
-    onAnswerChange(id, '');
-
-    // Reset in candidate document in DB
-    let answersUpdate: any = {};
-    if (id === 'speaking_p1') {
-      answersUpdate.speakingPart1 = { audioPath: null, aiEvaluation: null };
-    } else if (id === 'speaking_p2_q1') {
-      answersUpdate.speakingPart2 = { sp_1_audioPath: null };
-    } else if (id === 'speaking_p2_q2') {
-      answersUpdate.speakingPart2 = { sp_2_audioPath: null };
-    } else if (id === 'speaking_p2_q3') {
-      answersUpdate.speakingPart2 = { sp_3_audioPath: null };
-    }
-
-    try {
-      await candidateService.updateAnswers(candidateId, answersUpdate);
-    } catch (err) {
-      console.warn('Failed to reset candidate speaking answer in DB:', err);
-    }
-
-    // Clear local storage / indexedDB caches
-    try {
-      await storageService.removeLocalAudio(`${candidateId}_${id}`);
-      const backupKey = `offline_speaking_${candidateId}`;
-      const existingBackup = JSON.parse(localStorage.getItem(backupKey) || '{}');
-      delete existingBackup[id];
-      localStorage.setItem(backupKey, JSON.stringify(existingBackup));
-    } catch (e) {}
-  };
-
   const startRecording = async (id: string) => {
-    // If already done, notify user they can use the re-record button
-    if (answers[id] || recordingState[id] === 'done') {
-      const retry = window.confirm('Bài nói này đã được lưu. Bạn có muốn ghi âm lại không?');
-      if (retry) {
-        await handleResetRecording(id);
-      }
+    // Strict 1-time speaking recording per account per exam: once done, cannot re-record
+    if (isQuestionRecorded(id) || recordingState[id] === 'done' || recordingState[id] === 'recording' || recordingState[id] === 'saving') {
       return;
     }
 
@@ -218,7 +180,7 @@ export default function SpeakingSection({
           const audioBlob = new Blob(audioChunks.current[id], { type: actualMime });
           const localBlobUrl = URL.createObjectURL(audioBlob);
           
-          // 1. Immediately store the pristine Blob URL for in-browser playback (100% iOS Safari compatible)
+          // 1. Immediately store the pristine Blob URL for in-browser playback
           setAudioUrls(prev => ({ ...prev, [id]: localBlobUrl }));
 
           // 2. Cache raw Blob to IndexedDB locally
@@ -235,7 +197,6 @@ export default function SpeakingSection({
             savedUrl = localBlobUrl;
           }
 
-          // If upload produced a permanent HTTP/HTTPS URL, update audioUrls, otherwise retain localBlobUrl
           if (savedUrl && (savedUrl.startsWith('http') || savedUrl.startsWith('/'))) {
             setAudioUrls(prev => ({ ...prev, [id]: savedUrl }));
           }
@@ -264,7 +225,8 @@ export default function SpeakingSection({
             } catch (e) {}
           }
           
-          // Mark answer as registered
+          // Mark answer as registered and lock strictly to 1 time
+          localStorage.setItem(getSpeakingRecordKey(id), 'true');
           onAnswerChange(id, savedUrl);
 
           // If speaking_p1 (Read Aloud), trigger Gemini AI Pronunciation scoring automatically in background
@@ -302,7 +264,8 @@ export default function SpeakingSection({
         } catch (generalErr) {
           console.error('Error processing audio recording:', generalErr);
         } finally {
-          // ALWAYS mark as done and release the mic hardware
+          // ALWAYS mark as done, record one-time flag, and release the mic hardware
+          localStorage.setItem(getSpeakingRecordKey(id), 'true');
           setRecordingState(prev => ({ ...prev, [id]: 'done' }));
           try {
             stream.getTracks().forEach(track => track.stop());
@@ -310,10 +273,6 @@ export default function SpeakingSection({
         }
       };
 
-      // CRITICAL FOR IOS SAFARI:
-      // DO NOT pass a timeslice (like start(1000)). In WebKit, chunked MP4 recordings produce
-      // corrupted multi-part atoms that cannot be re-concatenated with new Blob(chunks).
-      // Calling start() without arguments produces a single clean, fully valid MP4 file on stop!
       mediaRecorder.start();
       setRecordingState(prev => ({ ...prev, [id]: 'recording' }));
       setRecordingSeconds(prev => ({ ...prev, [id]: 0 }));
@@ -332,8 +291,6 @@ export default function SpeakingSection({
   const stopRecording = (id: string) => {
     const mediaRecorder = mediaRecorders.current[id];
     if (mediaRecorder && mediaRecorder.state === 'recording') {
-      // NOTE: Do NOT call mediaRecorder.requestData() before stop()!
-      // In Safari iOS, calling requestData() right before stop() emits an unneeded fragmented chunk.
       mediaRecorder.stop();
       if (timers.current[id]) {
         clearInterval(timers.current[id]);
@@ -354,30 +311,22 @@ export default function SpeakingSection({
     const newUrls = { ...audioUrls };
 
     const restoreRecordings = async () => {
-      if (answers['speaking_p1']) {
-        newStates['speaking_p1'] = 'done';
-        newUrls['speaking_p1'] = createPlayableBlobUrl(answers['speaking_p1']);
-      } else if (candidateId) {
-        const local = await storageService.getLocalAudio(`${candidateId}_speaking_p1`);
-        if (local) {
-          const url = createPlayableBlobUrl(local);
-          newStates['speaking_p1'] = 'done';
-          newUrls['speaking_p1'] = url;
-          onAnswerChange('speaking_p1', url);
-        }
-      }
+      const qIds = ['speaking_p1', ...speakingQuestions.map((_, idx) => `speaking_p2_q${idx + 1}`)];
 
-      for (let idx = 0; idx < speakingQuestions.length; idx++) {
-        const id = `speaking_p2_q${idx + 1}`;
-        if (answers[id]) {
+      for (const id of qIds) {
+        if (isQuestionRecorded(id) || answers[id]) {
           newStates[id] = 'done';
-          newUrls[id] = createPlayableBlobUrl(answers[id]);
+          if (answers[id]) {
+            newUrls[id] = createPlayableBlobUrl(answers[id]);
+          }
+          localStorage.setItem(getSpeakingRecordKey(id), 'true');
         } else if (candidateId) {
           const local = await storageService.getLocalAudio(`${candidateId}_${id}`);
           if (local) {
             const url = createPlayableBlobUrl(local);
             newStates[id] = 'done';
             newUrls[id] = url;
+            localStorage.setItem(getSpeakingRecordKey(id), 'true');
             onAnswerChange(id, url);
           }
         }
@@ -385,23 +334,36 @@ export default function SpeakingSection({
 
       setRecordingState(newStates);
       setAudioUrls(newUrls);
+
+      // Restore AI spoken status
+      const spokenMap: Record<string, boolean> = {};
+      speakingQuestions.forEach((q) => {
+        if (localStorage.getItem(getAiSpeakKey(q.id)) === 'true') {
+          spokenMap[q.id] = true;
+        }
+      });
+      setAiSpokenQuestions(spokenMap);
     };
 
     restoreRecordings();
-  }, [answers, candidateId]);
+  }, [answers, candidateId, candidatePhone, examId, speakingQuestions.length]);
 
-  // AI Voice speech synthesizer for Part 2 Questions - Stuck-free Chrome fix
-  const handleAISpeak = (text: string) => {
+  // AI Voice speech synthesizer for Part 2 Questions - strictly playable 1 time per question
+  const handleAISpeakOnce = (text: string, qId: string) => {
+    const key = getAiSpeakKey(qId);
+    if (aiSpokenQuestions[qId] || localStorage.getItem(key) === 'true') {
+      return;
+    }
+    localStorage.setItem(key, 'true');
+    setAiSpokenQuestions(prev => ({ ...prev, [qId]: true }));
+
     if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); // Stop any currently playing audio
-      
-      // Delay-release ensure voice engine does not block
+      window.speechSynthesis.cancel();
       setTimeout(() => {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US';
-        utterance.rate = 0.85; // Natural speed
+        utterance.rate = 0.85;
         
-        // Select an English voice if available
         const voices = window.speechSynthesis.getVoices();
         const enVoice = voices.find(v => v.lang.startsWith('en-') || v.lang.startsWith('en_'));
         if (enVoice) {
@@ -424,6 +386,9 @@ export default function SpeakingSection({
           <Mic className="w-5 h-5 text-indigo-900" />
           <h2 className="text-base font-black text-slate-800 uppercase">KỸ NĂNG: NÓI (SPEAKING)</h2>
         </div>
+        <span className="text-xs font-mono font-bold bg-amber-50 text-amber-900 border border-amber-200 px-3 py-1 rounded-lg">
+          Quy chế: Ghi âm 1 lần duy nhất
+        </span>
       </div>
 
       {/* Mic Authorization Check */}
@@ -485,11 +450,11 @@ export default function SpeakingSection({
               ) : (
                 <button
                   onClick={() => startRecording('speaking_p1')}
-                  disabled={recordingState['speaking_p1'] === 'saving' || recordingState['speaking_p1'] === 'done'}
+                  disabled={recordingState['speaking_p1'] === 'saving' || recordingState['speaking_p1'] === 'done' || isQuestionRecorded('speaking_p1')}
                   className="bg-indigo-900 hover:bg-indigo-850 text-white font-bold py-3 px-6 rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
                 >
                   <Mic className="w-4 h-4" /> 
-                  {recordingState['speaking_p1'] === 'done' ? 'Locked (Đã khóa ghi âm)' : 'Start Recording (Bắt đầu nói)'}
+                  {recordingState['speaking_p1'] === 'done' || isQuestionRecorded('speaking_p1') ? 'Locked (Đã khóa ghi âm)' : 'Start Recording (Bắt đầu nói)'}
                 </button>
               )}
 
@@ -507,27 +472,19 @@ export default function SpeakingSection({
                 </div>
               )}
 
-              {recordingState['speaking_p1'] === 'done' && (
+              {(recordingState['speaking_p1'] === 'done' || isQuestionRecorded('speaking_p1')) && (
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-xl text-xs font-extrabold">
-                    <Check className="w-4 h-4" /> Đã lưu bài nói thành công ✓
+                    <Check className="w-4 h-4" /> Đã lưu bài nói thành công (1/1 lần) ✓
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleResetRecording('speaking_p1')}
-                    className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs"
-                    title="Ghi âm lại nếu âm thanh bị lỗi hoặc muốn làm lại"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Ghi âm lại bài này
-                  </button>
                 </div>
               )}
             </div>
 
             {/* Reassurance text */}
-            {recordingState['speaking_p1'] === 'done' && (
+            {(recordingState['speaking_p1'] === 'done' || isQuestionRecorded('speaking_p1')) && (
               <div className="text-xs text-slate-500 flex items-center gap-2 font-medium">
-                <span className="font-sans italic">Hệ thống đã lưu bản ghi âm an toàn.</span>
+                <span className="font-sans italic">Hệ thống đã lưu bản ghi âm an toàn (Không thể ghi âm lại).</span>
               </div>
             )}
           </div>
@@ -536,7 +493,6 @@ export default function SpeakingSection({
           {Boolean((audioUrls['speaking_p1'] && audioUrls['speaking_p1'].trim() !== '') || (answers['speaking_p1'] && answers['speaking_p1'].trim() !== '')) && (
             <SpeakingAudioPlayer
               src={audioUrls['speaking_p1'] || answers['speaking_p1']}
-              onReset={() => handleResetRecording('speaking_p1')}
               title="Nghe lại bản ghi âm Phần 1 của bạn:"
             />
           )}
@@ -557,30 +513,38 @@ export default function SpeakingSection({
           </div>
 
           <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide">
-            Bấm nút AI để nghe câu hỏi đọc to. Sau đó bấm nút Ghi âm để trả lời câu hỏi (<span className="text-red-600 font-bold">Chỉ được ghi âm 1 lần duy nhất</span>):
+            Bấm nút AI để nghe câu hỏi đọc to (1 lần). Sau đó bấm nút Ghi âm để trả lời câu hỏi (<span className="text-red-600 font-bold">Chỉ được ghi âm 1 lần duy nhất</span>):
           </p>
 
           {/* Questions Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {speakingQuestions.map((q, idx) => {
               const id = `speaking_p2_q${idx + 1}`;
-              const state = recordingState[id] || 'idle';
+              const isRecorded = isQuestionRecorded(id);
+              const state = isRecorded ? 'done' : (recordingState[id] || 'idle');
               const seconds = recordingSeconds[id] || 0;
               const isCompleted = state === 'done';
+              const isAiSpoken = Boolean(aiSpokenQuestions[q.id]);
 
               return (
                 <div key={q.id} className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50 flex flex-col justify-between space-y-5">
                   <div className="space-y-3">
                     <span className="text-xs font-extrabold text-indigo-900 tracking-wider block">CÂU HỎI {idx + 1}</span>
                     
-                    {/* AI Read Question Aloud Button */}
+                    {/* AI Read Question Aloud Button - Only 1 time */}
                     <button
-                      onClick={() => handleAISpeak(q.text)}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-950 font-bold rounded-xl text-xs border border-indigo-200 transition-all select-none cursor-pointer"
-                      title="Nhấp vào đây để AI đọc to câu hỏi này"
+                      type="button"
+                      onClick={() => handleAISpeakOnce(q.text, q.id)}
+                      disabled={isAiSpoken}
+                      className={`w-full flex items-center justify-center gap-2 px-3 py-2 font-bold rounded-xl text-xs border transition-all select-none ${
+                        isAiSpoken
+                          ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+                          : 'bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-950 border-indigo-200 cursor-pointer shadow-xs'
+                      }`}
+                      title={isAiSpoken ? 'Đã nghe câu hỏi (Chỉ được nghe 1 lần)' : 'Nhấp vào đây để AI đọc to câu hỏi này (1 lần duy nhất)'}
                     >
-                      <Volume2 className="w-4 h-4 text-indigo-900 animate-pulse" />
-                      <span>Nhấp vào đây để nghe câu hỏi</span>
+                      <Volume2 className={`w-4 h-4 ${isAiSpoken ? 'text-slate-400' : 'text-indigo-900 animate-pulse'}`} />
+                      <span>{isAiSpoken ? 'Đã nghe câu hỏi (Đã khóa)' : 'Nhấp vào đây để nghe câu hỏi (1 lần)'}</span>
                     </button>
 
                     <p className="text-sm font-extrabold text-slate-800 leading-relaxed font-sans italic pt-1 text-center">
@@ -626,22 +590,14 @@ export default function SpeakingSection({
                     {isCompleted && (
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 px-2 rounded-lg text-xs font-bold">
-                            <Check className="w-3.5 h-3.5" /> Đã lưu ✓
+                          <span className="flex items-center gap-1 bg-green-50 border border-green-200 text-green-700 py-1 px-2.5 rounded-lg text-xs font-bold">
+                            <Check className="w-3.5 h-3.5" /> Đã ghi âm (1/1 lần) ✓
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => handleResetRecording(id)}
-                            className="text-xs text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                            title="Ghi âm lại câu này"
-                          >
-                            <RotateCcw className="w-3 h-3" /> Ghi lại
-                          </button>
+                          <span className="text-[10px] text-slate-400 italic">Đã khóa</span>
                         </div>
                         {Boolean((audioUrls[id] && audioUrls[id].trim() !== '') || (answers[id] && answers[id].trim() !== '')) && (
                           <SpeakingAudioPlayer
                             src={audioUrls[id] || answers[id]}
-                            onReset={() => handleResetRecording(id)}
                             title={`Nghe lại câu ${idx + 1}:`}
                             compact
                           />

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Volume2, Headphones, AlertTriangle, HelpCircle, RefreshCw, CheckCircle2, Lock, RotateCcw } from 'lucide-react';
+import { Play, Volume2, Headphones, AlertTriangle, HelpCircle, RefreshCw, CheckCircle2, Lock } from 'lucide-react';
 import { candidateService } from '../services/candidateService';
 
 interface ListeningSectionProps {
@@ -220,61 +220,21 @@ export default function ListeningSection({
     // Check if THIS specific candidate account has played this exam's audio
     const isL1Played = 
       candidateAudioPlayback?.audio1Played === true ||
-      (candidateAudioPlayback?.audio1Played !== false && localStorage.getItem(key1) === 'true');
+      localStorage.getItem(key1) === 'true';
     const isL2Played = 
       candidateAudioPlayback?.audio2Played === true ||
-      (candidateAudioPlayback?.audio2Played !== false && localStorage.getItem(key2) === 'true');
+      localStorage.getItem(key2) === 'true';
     
     if (isL1Played) {
       setAudio1State('ended');
       localStorage.setItem(key1, 'true');
-    } else {
-      setAudio1State('idle');
-      localStorage.removeItem(key1);
     }
 
     if (isL2Played) {
       setAudio2State('ended');
       localStorage.setItem(key2, 'true');
-    } else {
-      setAudio2State('idle');
-      localStorage.removeItem(key2);
     }
   }, [audio1Url, audio2Url, candidateId, candidatePhone, examId, candidateAudioPlayback?.audio1Played, candidateAudioPlayback?.audio2Played]);
-
-  // Reset audio playback handlers (allows re-listening in test mode or if audio failed)
-  const handleResetAudio1 = () => {
-    localStorage.removeItem(getAudio1Key());
-    setAudio1State('idle');
-    setAudio1Progress(0);
-    setAudio1CurrentTime(0);
-    setAudio1ErrorMsg(null);
-    setAudio1UsingFallback(false);
-    if (audio1Ref.current) {
-      audio1Ref.current.currentTime = 0;
-      audio1Ref.current.src = '/audio/hotel_checkin.mp3';
-      audio1Ref.current.load();
-    }
-  };
-
-  const handleResetAudio2 = () => {
-    localStorage.removeItem(getAudio2Key());
-    setAudio2State('idle');
-    setAudio2Progress(0);
-    setAudio2CurrentTime(0);
-    setAudio2ErrorMsg(null);
-    setAudio2UsingFallback(false);
-    if (audio2Ref.current) {
-      audio2Ref.current.currentTime = 0;
-      audio2Ref.current.src = '/audio/rented_properties.mp3';
-      audio2Ref.current.load();
-    }
-  };
-
-  const handleResetAllAudios = () => {
-    handleResetAudio1();
-    handleResetAudio2();
-  };
 
   // Cleanup audio elements on unmount to prevent playing in background
   useEffect(() => {
@@ -517,25 +477,16 @@ export default function ListeningSection({
           <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
           <div>
             <p className="text-red-950 text-xs font-bold leading-relaxed">
-              <strong className="uppercase">CHÚ Ý QUAN TRỌNG:</strong> Thí sinh <strong className="underline">CHỈ ĐƯỢC NGHE 1 LẦN DUY NHẤT</strong>. Khi đã nhấn Play, audio sẽ phát liên tục đến hết.
+              <strong className="uppercase">CHÚ Ý QUAN TRỌNG:</strong> Mỗi tài khoản đối với mỗi kì thi <strong className="underline text-red-700">CHỈ ĐƯỢC NGHE 1 LẦN DUY NHẤT</strong>. Khi đã nhấn Play, audio sẽ phát liên tục đến hết.
             </p>
             <p className="text-[11px] text-red-800/80 mt-0.5">
-              Vui lòng bấm nút <strong>"Kiểm tra loa / tai nghe"</strong> bên cạnh để đảm bảo thiết bị có âm thanh trước khi bấm làm bài. <span className="font-semibold text-red-900">(Người dùng iPhone/iPad: Hãy gạt tắt cần gạt Im lặng ở cạnh sườn máy và tăng âm lượng nếu không nghe thấy tiếng).</span>
+              Vui lòng bấm nút <strong>"Kiểm tra loa / tai nghe"</strong> bên cạnh để đảm bảo thiết bị có âm thanh trước khi bấm nghe bài thi. <span className="font-semibold text-red-900">(Người dùng iPhone/iPad: Hãy gạt tắt cần gạt Im lặng ở cạnh sườn máy và tăng âm lượng nếu không nghe thấy tiếng).</span>
             </p>
           </div>
         </div>
 
-        {/* Sound check test button & Reset button */}
-        <div className="shrink-0 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleResetAllAudios}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white/90 hover:bg-white border border-slate-200 hover:border-slate-300 transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
-            title="Đặt lại trạng thái âm thanh bài thi nếu trước đó bị khóa hoặc không nghe thấy"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-indigo-700" /> ĐẶT LẠI AUDIO 1 & 2
-          </button>
-
+        {/* Sound check test button */}
+        <div className="shrink-0 flex items-center gap-2">
           <button
             type="button"
             onClick={handleTestSpeaker}
@@ -647,16 +598,11 @@ export default function ListeningSection({
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
                       <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
                         <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>Bài Audio 1 đã hoàn thành và được khóa theo quy chế thi.</span>
+                        <span>Bài Audio 1 đã kết thúc và được khóa theo quy chế thi (Chỉ được nghe 1 lần duy nhất).</span>
                       </p>
-                      <button
-                        type="button"
-                        onClick={handleResetAudio1}
-                        className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all"
-                        title="Mở khóa nếu bạn đang làm bài thi thử hoặc gặp sự cố âm thanh"
-                      >
-                        <RotateCcw className="w-3 h-3" /> Mở khóa nghe lại (Thi thử)
-                      </button>
+                      <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg">
+                        ĐÃ KHÓA AUDIO 1
+                      </span>
                     </div>
                   )}
 
@@ -891,16 +837,11 @@ export default function ListeningSection({
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
                       <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
                         <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>Bài Audio 2 đã hoàn thành và được khóa theo quy chế thi.</span>
+                        <span>Bài Audio 2 đã kết thúc và được khóa theo quy chế thi (Chỉ được nghe 1 lần duy nhất).</span>
                       </p>
-                      <button
-                        type="button"
-                        onClick={handleResetAudio2}
-                        className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all"
-                        title="Mở khóa nếu bạn đang làm bài thi thử hoặc gặp sự cố âm thanh"
-                      >
-                        <RotateCcw className="w-3 h-3" /> Mở khóa nghe lại (Thi thử)
-                      </button>
+                      <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg">
+                        ĐÃ KHÓA AUDIO 2
+                      </span>
                     </div>
                   )}
 
